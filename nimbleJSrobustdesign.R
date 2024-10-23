@@ -87,41 +87,45 @@ JS_SCR <- nimbleCode({
   Qd[1:3,1:3,tp] <- (Q[2:4,2:4,tp] * dt[tp])
 
   G[2:4,2:4,tp] <- Rexpm(Qd[1:3,1:3,tp]) #matrix exponential for competing states
-#  stateprob[(tp+1),1:4] <- stateprob[(tp),1:4] %*% G[1:4,1:4,tp] #membership probability 
+  stateprob[(tp+1),1:4] <- stateprob[(tp),1:4] %*% G[1:4,1:4,tp] #membership probability 
   }
-  # Psi
-#  for(tp in 1:(n.prim.occasions - 1)){
-#    psi[tp] <- stateprob[tp,2]/sum(stateprob[tp,2:3]) #probability of being available given alive
-#    alive[tp] <- stateprob[tp,2] + stateprob[tp,3]
-#  }
-}) 
+   #Psi
+  for(t in 1:n.prim.occasions){
+        psi[t] <- stateprob[t,2]/sum(stateprob[t,2:3]) #probability of being available given alive
+        alive[t] <- stateprob[t,2] + stateprob[t,3] #probability alive
+  }
+ 
   # Likelihood
   for (i in 1:M){
-    Smesh[i] ~ dunif(1, nrow(mesh))
+    S[i] ~ dunif(0, n.mesh)
+    Smesh[i] <- round(S[i]) #for now, just uniformly sampling available mesh, will need to change
     for (t in 1:n.prim.occasions){
       # State process
       w[i,t] ~ dbern(psi[t]) #available given alive
       z[i,t] ~ dbern(alive[t]) #alive in primary
       # Observation process
-      sec_in_prim <- which(primary == t)
+      ###can't replace or have flexible size variables
+    }#t (primary)
       #Detection at multi-catch trap
-      for (s in sec_in_prim){
-        hus <- array(0, dim = J)
-        exphus <- array(0, dim = J)
+      for (s in 1:n.sec.occasions){
+        tfors[s] <- primary[s]
+        #hus <- array(0, dim = J)
+        #exphus <- array(0, dim = J)
         for(j in 1:J){
-          dij <- distmat[j, Smesh[i]]
-          hij <- lambda0 * exp(-(dij * dij)/(2*sigma2))
-          ujt <- usage.traps[j, t]
-          hus[j] <- hij * ujt
-          exphus[j] <- exp(-hij * ujt)
-          Jprobs[i,s,j] <- hus[j]/sum(hus)*(1 - prod(exphus))
+          dij[j,s] <- distmat[j, Smesh[i]] #again, this will change when hrc model changes
+          hij[j,s] <- lambda0 * exp(-(dij[j,s] * dij[j,s])/(2*sigma2))
+          ujs[j,s] <- usage.traps[j, s]
+          hus[j,s] <- hij[j,s] * ujs[j,s]
+          exphus[j,s] <- exp(-hus[j,s])
+          Jprobs[i,s,j] <- hus[j,s]/sum(hus[1:J,s])*(1 - prod(exphus[1:J,s]))
         } #j
-        Jprobs[i,s,J+1] <- prod(exphus) #J+1 indexed outcome is no detection
-        mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,t] * w[i,t]
-        y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
-      } #s (secondary within primary)
-    } #t (primary)
+        Jprobs[i,s,J+1] <- prod(exphus[1:J,s]) #J+1 indexed outcome is no detection
+        mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,tfors] * w[i,tfors]
+       # y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
+      } #s (secondarys)
   } #i (individual)
+})
+  
   # Calculate derived population parameters
   for (i in 1:M){
     for (t in 1:n.occasions){
@@ -143,7 +147,7 @@ JS_SCR <- nimbleCode({
     Nalive[i] <- 1 - Nind[i][which(Nind[i] == 0)]
   } #i
   Nsuper <- sum(Nalive) # Superpopulation size
-})
+
 
 ch13 <- ch0[,primary %in% 1:3,]
 ch13 <- ch13[apply(ch13[,,-dim(ch13)[3]], 1, sum) > 0,,]
@@ -159,8 +163,11 @@ data <- list(y = ch13,
              dt = dt13)
 
 constants <- list(n.prim.occasions = 3,
+                  n.sec.occasions = 18,
                   J = 91,
-                  M = 700)
+                  M = 700,
+                  n.mesh = 143
+                  )
 
 inits <- list(
   phi = m$get_par("phi", m = 1, j = 1, s = 1)[1:2], 
@@ -168,8 +175,8 @@ inits <- list(
   sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1),
   delta = m$state()$delta()[1],
   beta = m$get_par("beta", m = 1, j = 1, s = 1)[1:3], #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
-  rho_ua_Intercept = apply(as.array(1:2), 1, function(x){m$state()$trm(k = (x+1))[2,1]}), #can't remember if its x or x+1
-  rho_au_Intercept = apply(as.array(1:2), 1, function(x){m$state()$trm(k = (x+1))[1,2]})
+  rho_ua_Intercept = apply(as.array(1:2), 1, function(x){m$state()$trm(k = (x))[2,1]}),
+  rho_au_Intercept = apply(as.array(1:2), 1, function(x){m$state()$trm(k = (x))[1,2]})
 )
 
 Rmodel <- nimbleModel(code = JS_SCR, 
