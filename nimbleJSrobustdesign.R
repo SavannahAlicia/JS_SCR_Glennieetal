@@ -94,10 +94,11 @@ JS_SCR <- nimbleCode({
         psi[t] <- stateprob[t,2]/sum(stateprob[t,2:3]) #probability of being available given alive
         alive[t] <- stateprob[t,2] + stateprob[t,3] #probability alive
   }
+  
  
   # Likelihood
   for (i in 1:M){
-    S[i] ~ dunif(0, n.mesh)
+    S[i] ~ dunif(0.5, (n.mesh+.49999))
     Smesh[i] <- round(S[i]) #for now, just uniformly sampling available mesh, will need to change
     for (t in 1:n.prim.occasions){
       # State process
@@ -108,19 +109,16 @@ JS_SCR <- nimbleCode({
     }#t (primary)
       #Detection at multi-catch trap
       for (s in 1:n.sec.occasions){
-        tfors[s] <- primary[s]
         #hus <- array(0, dim = J)
         #exphus <- array(0, dim = J)
         for(j in 1:J){
-          dij[j,s] <- distmat[j, Smesh[i]] #again, this will change when hrc model changes
-          hij[j,s] <- lambda0 * exp(-(dij[j,s] * dij[j,s])/(2*sigma2))
-          ujs[j,s] <- usage.traps[j, s]
-          hus[j,s] <- hij[j,s] * ujs[j,s]
-          exphus[j,s] <- exp(-hus[j,s])
-          Jprobs[i,s,j] <- hus[j,s]/sum(hus[1:J,s])*(1 - prod(exphus[1:J,s]))
+          #again, this will change when hrc model changes
+          hus[j,s,i] <- lambda0 * exp(-( distmat[j, Smesh[i]] *  distmat[j, Smesh[i]])/(2*sigma2)) * usage.traps[j, s]
+          exphus[j,s,i] <- exp(-hus[j,s,i])
+          Jprobs[i,s,j] <- hus[j,s,i]/sum(hus[1:J,s,i])*(1 - prod(exphus[1:J,s,i]))
         } #j
-        Jprobs[i,s,J+1] <- prod(exphus[1:J,s]) #J+1 indexed outcome is no detection
-        mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,tfors] * w[i,tfors]
+        Jprobs[i,s,J+1] <- prod(exphus[1:J,s,i]) #J+1 indexed outcome is no detection
+        mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,primary[s]] * w[i,primary[s]]
        # y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
       } #s (secondarys)
   } #i (individual)
