@@ -93,13 +93,19 @@ JS_SCR <- nimbleCode({
   for(t in 1:n.prim.occasions){
         psi[t] <- stateprob[t,2]/sum(stateprob[t,2:3]) #probability of being available given alive
         alive[t] <- stateprob[t,2] + stateprob[t,3] #probability alive
+        omega[t] ~ dbeta(5,9)
   }
   
  
   # Likelihood
   for (i in 1:M){
-    S[i] ~ dunif(0.5, (n.mesh+.49999))
-    Smesh[i] <- round(S[i]) #for now, just uniformly sampling available mesh, will need to change
+    #sample x and y space, then check if AC is within 
+    S[i, 1] ~ dunif(1, upperlimitx)    # x-coord of activity centers
+    S[i, 2] ~ dunif(1, upperlimity)    # y coord of activity centers
+    hab[i] <- habMat[trunc(S[i, 1]), trunc(S[i, 2])] #for now, just uniformly sampling available mesh, will need to change
+    ones[i] ~ dbern(hab[i]) #the ones trick
+    Smesh[i] <- whichmesh[trunc(S[i, 1]), trunc(S[i, 2])]
+    real[i] ~ dbern(omega[i])
     for (t in 1:n.prim.occasions){
       # State process
       w[i,t] ~ dbern(psi[t]) #available given alive
@@ -118,10 +124,14 @@ JS_SCR <- nimbleCode({
           Jprobs[i,s,j] <- hus[j,s,i]/sum(hus[1:J,s,i])*(1 - prod(exphus[1:J,s,i]))
         } #j
         Jprobs[i,s,J+1] <- prod(exphus[1:J,s,i]) #J+1 indexed outcome is no detection
-        mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,primary[s]] * w[i,primary[s]]
-       # y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
+        mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,primary[s]] * w[i,primary[s]] * real[i] #is this right for data augmentation?
+        #I think the trap of detection is multinomial, but then the alive, present, and real are bernoulli... do I need a custom distribution?
+        y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
       } #s (secondarys)
   } #i (individual)
+  #Derived parameters
+
+  
 })
   
   # Calculate derived population parameters
@@ -146,24 +156,46 @@ JS_SCR <- nimbleCode({
   } #i
   Nsuper <- sum(Nalive) # Superpopulation size
 
+n.prim.occasions <- 3
+n.fake.inds <- 500
+M <- dim(ch13)[1] + n.fake.inds
+n.sec.occasions <- sum(primary %in% 1:n.prim.occasions)
+#subset capture history
+ch13 <- ch0[,1:n.sec.occasions,]
+ch13 <- ch13[apply(ch13[,,-dim(ch13)[3]], 1, sum) > 0,,] #remove 0 chs
+#data augmentation
+nodets <- matrix(0, nrow = n.sec.occasions, ncol = dim(ch13)[3])
+nodets[,dim(ch13)[3]] <- 1
+aug <- aperm(replicate(n.fake.inds, nodets), c(3,1,2))
+augch13 <- abind::abind(ch13, aug, along = 1)
+dimnames(augch13)[2:3] <- dimnames(ch13)[2:3]
+real <- c(rep(1, dim(ch13)[1]), rep(NA, n.fake.inds))
+#subset trap usage
+usage.traps13 <- usage.traps[,1:n.sec.occasions]
+#subset primary code
+primary13 <- primary[1:n.sec.occasions]
+#subset primary dt
+dt13 <-  dt[1:n.prim.occasions]
+#convert mesh to raster matrix of 1 and 
+habMat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh))))
+whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
 
-ch13 <- ch0[,primary %in% 1:3,]
-ch13 <- ch13[apply(ch13[,,-dim(ch13)[3]], 1, sum) > 0,,]
-usage.traps13 <- usage.traps[,primary %in% 1:3]
-primary13 <- primary[primary %in% 1:3]
-dt13 <-  dt[1:3]
-
-data <- list(y = ch13, 
-             mesh = as.matrix(mesh),
+data <- list(y = augch13, 
+             real = real,
+             habMat = as.matrix(habMat),
+             whichmesh = as.matrix(whichmesh),
              usage.traps = usage.traps13,
              distmat = distmat,
-             primary = primary13,
-             dt = dt13)
+             dt = dt13,
+             upperlimitx = ncol(habMat),
+             upperlimity = nrow(habMat),
+             ones = rep(1, M))
 
 constants <- list(n.prim.occasions = 3,
                   n.sec.occasions = 18,
                   J = 91,
-                  M = 700,
+                  M = M,
+                  primary = primary13,
                   n.mesh = 143
                   )
 
