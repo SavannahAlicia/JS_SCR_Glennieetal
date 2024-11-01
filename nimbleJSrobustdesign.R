@@ -4,7 +4,7 @@ ch <- chs_noneuclidean_extraprims2000$capthist()
 traps <- chs_noneuclidean_extraprims2000$traps()
 distmat <- chs_noneuclidean_extraprims2000$userdistmat()
 mesh <- chs_noneuclidean_extraprims2000$mesh()
-primary <- m$data()$primary()
+primary <- chs_noneuclidean_extraprims2000$primary()
 usage.traps <- usage(traps)
 
 #create capture history that has a row for no detections per occasion
@@ -126,18 +126,16 @@ JS_SCR <- nimbleCode({
         Jprobs[i,s,J+1] <- prod(exphus[1:J,s,i]) #J+1 indexed outcome is no detection
         mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i,primary[s]] * w[i,primary[s]] * real[i] #is this right for data augmentation?
         #I think the trap of detection is multinomial, but then the alive, present, and real are bernoulli... do I need a custom distribution?
-        y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
+       # y[i,s,1:(J+1)] ~ dmultinom(mu[i,s,1:(J+1)]) #multinomial, either detected at one trap j or not detected
       } #s (secondarys)
   } #i (individual)
   #Derived parameters
-
-  
 })
   
   # Calculate derived population parameters
   for (i in 1:M){
-    for (t in 1:n.occasions){
-      u[i,t] <- z[i,t] * w[i,t] # Deflated latent state (u)
+    for (t in 1:n.prim.occasions){
+      u[i,t] <- z[i,t] * w[i,t] * real[i] #alive and present and real
     }
   }
   for (i in 1:M){
@@ -187,16 +185,15 @@ data <- list(y = augch13,
              usage.traps = usage.traps13,
              distmat = distmat,
              dt = dt13,
-             upperlimitx = ncol(habMat),
-             upperlimity = nrow(habMat),
+             upperlimitx = ncol(habMat)+1,
+             upperlimity = nrow(habMat)+1,
              ones = rep(1, M))
 
 constants <- list(n.prim.occasions = 3,
                   n.sec.occasions = 18,
                   J = 91,
                   M = M,
-                  primary = primary13,
-                  n.mesh = 143
+                  primary = primary13
                   )
 
 inits <- list(
