@@ -11,55 +11,146 @@ Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expmexpm',
 Rt <- nimbleRcall(function(x = double(2)){}, Rfun = 't',
                   returnType = double(2))
 
+JSguts_nf <- nimbleFunction(
+  setup = function(habmat, whichmesh, distmat, trapusage, dt){
+    habmat <- as.matrix(habmat) #just in case stored as df or raster
+    whichmesh <- as.matrix(whichmesh)
+    J <- nrow(distmat)
+    dist2 <- distmat*distmat
+    n.sec.occasions <- ncol(trapusage)
+    n.prim.occasions <- length(dt) + 1
+  },
+  # run = function(){},
+  methods = list(
+    dhab = function(x = double(), #ones data
+                     S = double(1), #array of length 2 x and y
+                     log = logical(0, default = FALSE)){
+      hab <- habmat[trunc(S[1]), trunc(S[2])] #choose from mesh
+      if(log) return(log(hab))
+      else return(hab)
+      returnType(double())
+    },
+    probdetect = function(lambda = double(), 
+                           sigma = double(), 
+                           S = double(1)){
+      smesh <- whichmesh[trunc(S[1]), trunc(S[2])] #index of mesh
+      hus0 <- lambda*exp(-dist2[1:J, smesh]/(2*sigma^2))
+      jprobs <- matrix(0, nrow = n.sec.occasions, ncol = J+1)
+      for( s in 1:n.sec.occasions ){
+        hus <- hus0*trapusage[,s]
+        jprobs[s, J + 1] <- exp(-sum(hus))
+        jprobs[s, 1:J] <- hus/sum(hus) * (1 - jprobs[s, J + 1])
+      }
+      returnType(double(2))
+      return(jprobs)
+    },
+    transprobs = function(phi = double(1), 
+                          b = double(1)){ #note could vectorize to speed up
+      G <- array(NA, dim = c(3,3,(n.prim.occasions - 1)))
+      for(tp in 1:(n.prim.occasions - 1)){
+        G[1:3, 1:3, tp] <- calcGt(phi, b, tp)
+      }
+      returnType(double(3))
+      return(G)
+    },
+    calcGt = function(phi = double(1), 
+                     b = double(1),
+                     tp = double()){
+      # State membership transition probability 
+        #Q is rates
+      Q <- G <- matrix(0, 3, 3)
+        Q[1:3,1:3] <- c( #note recruitment index starts at 1, but transitions happen between occasions 
+          #log(1 - b[(tp+1)])/dt[tp],                   0,          0,
+          NA,                                           0,          0,
+          #-log(1 - b[(tp+1)])/dt[tp],       log(phi[tp]),          0, #causes errors if b is 1
+          NA,                                log(phi[tp]),          0,
+          0,                               -log(phi[tp]),          0
+        )
+        #have to fill matrix by column, not row
+        G[1, 1:3] <- c(1-b[(tp+1)], b[(tp+1)], 0) #from unborn
+        G[2:3, 1] <- c(0,0) #cannot transition back to unborn
+        G[2:3,2:3] <- Rexpm((Q[2:3,2:3] * dt[tp])) #matrix exponential for competing states
+        returnType(double(2))
+        return(G)
+      }
+  )
+)
+
+
+
+
+
 #spatial
 JS_SCR <- nimbleCode({
   
   # Priors and constraints
+  # Detection 
   lambda0 ~ dunif(0, 1) # tilda takes left thing and puts it in x spot
-  sigma ~ dunif(0, 10000)
+  #logit(lambda0) = sum(covs)
+  #lambda0Intercept (think about priors)
+  #lambda0trapsstratumSoutheast
+  #lambda0trapstratumCentral
+  #lambda0trapstratumWest
+  #lambda0trapopensheltered
+  #lambda0periodf2
+  #lambda0periodf3
+  #lambda0periodf4
+  #lambda0periodf5
+  #lambda0periodf6
+  #lambda0periodf7
+  #lambda0periodf8
+  #lambda0periodf9
+  #lambda0periodf10
+  #lambda0periodf11
+  #also how to make sure that sum of possible lambdas is between 0 and 1?
+  sigma ~ dunif(0, 10000) #will also need multiple sigmas
+  #sigmaIntercept
+  #sigmatrapsstratumSoutheast
+  #sigmatrapstratumCentral
+  #sigmatrapstratumWest
+  #sigmatrapopensheltered
+  #sigmaperiodf2
+  #sigmaperiodf3
+  #sigmaperiodf4
+  #sigmaperiodf5
+  #sigmaperiodf6
+  #sigmaperiodf7
+  #sigmaperiodf8
+  #sigmaperiodf9
+  #sigmaperiodf10
+  #sigmaperiodf11
   sigma2 <- sigma * sigma
-  # 2 alive states, available and unavailable
-  delta ~ dunif(0,1) # determines relative recruitment into alive state 
-  omega ~ dbeta(5,9) #somewhat informed prior
-  #survival
-  for (tp in 1:(n.prim.occasions-1)){
-    phi[tp] ~ dunif(0, 1)
-   } #tp
   
-  # Dirichlet prior for entry probabilities
-  ##Do I need a prior for alpha?
+  # Data Augmentation 
+  omega ~ dbeta(5,9) #somewhat informed prior for superpopulation
+  
+  # Survival and Recruitment Rates
+    # Dirichlet prior for entry probabilities
   alpha[1:n.prim.occasions] <- rep(1, n.prim.occasions) 
   beta[1:n.prim.occasions] ~ ddirch(alpha[1:n.prim.occasions])
-  
+
   # Convert entry probs to conditional entry probs
   b[1] <- beta[1]
-  for (t in 2:n.prim.occasions){
-    b[t] <- beta[t]/prod(1 - b[1:(t-1)]) #is this vectorizing correctly?
+  for (tp in 2:n.prim.occasions){
+    b[tp] <- beta[tp]/prod(1 - b[1:(tp-1)]) 
+    #Survival per primary
+    phi[(tp-1)] ~ dunif(0, 1)
   } #t
   
-  # State membership transition probability 
-  for (tp in 1:(n.prim.occasions - 1)){
-    #Q is rates
-    Q[1:3,1:3,tp] <- c( #note recruitment index starts at 1, but transitions happen between occasions 
-      log(1 - b[(tp+1)])/dt[tp],                   0,          0,
-      -log(1 - b[(tp+1)])/dt[tp],       log(phi[tp]),          0,
-      0,                               -log(phi[tp]),          0
-    )
-    #have to fill matrix by column, not row
-    G[1, 1:3, tp] <- c(1-b[(tp+1)], b[(tp+1)], 0) #from unborn
-    G[2:3, 1, tp] <- c(0,0,0) #cannot transition back to unborn
-    #Qd[1:2,1:2,tp] <- (Q[2:3,2:3,tp] * dt[tp])
-    G[2:3,2:3,tp] <- Rexpm((Q[2:3,2:3,tp] * dt[tp])) #matrix exponential for competing states
-  }
+  # Convert rates to probabilities
+  G <- transprobs(phi, b, n.prim.occasions)
+  
   probstate1[1:3] <- c(1-b[1], b[1], 0) #create variable for first primary alive prob
   # Likelihood
   for (i in 1:M){
     #Home range center
     S[i, 1] ~ dunif(1, upperlimitx)    # x-coord of activity centers
     S[i, 2] ~ dunif(1, upperlimity)    # y coord of activity centers
-    hab[i] <- habMat[trunc(S[i, 1]), trunc(S[i, 2])] #sample x and y space, then check if AC is within mesh
+    hab[i] <- habmat[trunc(S[i, 1]), trunc(S[i, 2])] #sample x and y space, then check if AC is within mesh
     ones[i] ~ dbern(hab[i]) #the ones trick
     Smesh[i] <- whichmesh[trunc(S[i, 1]), trunc(S[i, 2])] #index of mesh
+    #relocate this to helper function
+
     #Data Augmentation
     real[i] ~ dbern(omega) 
     #State process
@@ -71,9 +162,9 @@ JS_SCR <- nimbleCode({
     #Observation process (multi-catch trap)
     for (s in 1:n.sec.occasions){
       for(j in 1:J){
-        hus[j,s,i] <- lambda0 * exp(-( distmat[j, Smesh[i]] *  distmat[j, Smesh[i]])/(2*sigma2)) * usage.traps[j, s]
+        hus[j,s,i] <- lambda0 * exp(-( distmat[j, Smesh[i]] *  distmat[j, Smesh[i]])/(2*sigma2)) * trapusage[j, s]
         exphus[j,s,i] <- exp(-hus[j,s,i])
-        Jprobs[i,s,j] <- hus[j,s,i]/sum(hus[1:J,s,i])*(1 - prod(exphus[1:J,s,i]))
+        Jprobs[i,s,j] <- hus[j,s,i]/sum(hus[1:J,s,i])*(1 - prod(exphus[1:J,s,i])) 
       } #j
       Jprobs[i,s,J+1] <- prod(exphus[1:J,s,i]) #J+1 indexed outcome is no detection
       mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i, primary[s], 2]  * real[i] #is this right for data augmentation?
@@ -89,6 +180,17 @@ JS_SCR <- nimbleCode({
 })
 
 
+distfn <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
+##Test it here:
+
+distfnc <- compileNimble(distfn)
+distfnc$probdetect(...)
+
+## in model code:
+ones[i] ~ distfn$dhab(s[i,1:2])
+jprob[i, n.sec.occasionss, 1:ntraps] <- distfn$probdetect(lambda, sigma, s[i, 1:2])
+
+
 #data prep
 m <- readRDS("~/Documents/UniStAndrews/BarBay_OpenSCR/results/m_sal5.Rds")
 n.prim.occasions <- 3
@@ -98,7 +200,7 @@ traps <- m$data()$traps()
 distmat <- m$data()$distances()
 mesh <- m$data()$mesh()
 primary <- m$data()$primary()
-usage.traps <- usage(traps)
+trapusage <- usage(traps)
 
 #create capture history that has a row for no detections per occasion
 ch0 <- array(data = NA, dim = c(dim(ch)[1:2], dim(ch)[3]+1))
@@ -122,27 +224,28 @@ augch13 <- abind::abind(ch13, aug, along = 1)
 dimnames(augch13)[2:3] <- dimnames(ch13)[2:3]
 real <- c(rep(1, dim(ch13)[1]), rep(NA, n.fake.inds))
 #subset trap usage
-usage.traps13 <- usage.traps[,1:n.sec.occasions]
+trapusage13 <- trapusage[,1:n.sec.occasions]
 #subset primary code
 primary13 <- primary[1:n.sec.occasions]
 #subset primary dt
 dt13 <-  dt[1:n.prim.occasions]
 #convert mesh to raster matrix of 1 and 
-habMat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh))))
+habmat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh))))
 whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
 M <- length(real)
 
 
 data <- list(y = augch13, 
              real = real,
-             habMat = as.matrix(habMat),
+             habmat = as.matrix(habmat),
              whichmesh = as.matrix(whichmesh),
-             usage.traps = usage.traps13,
+             trapusage = trapusage13,
              distmat = distmat,
              dt = dt13,
-             upperlimitx = ncol(habMat)+1,
-             upperlimity = nrow(habMat)+1,
+             upperlimitx = ncol(habmat)+1,
+             upperlimity = nrow(habmat)+1,
              ones = rep(1, M))
+
 
 constants <- list(n.prim.occasions = n.prim.occasions,
                   n.sec.occasions = n.sec.occasions,
@@ -163,10 +266,18 @@ Rmodel <- nimbleModel(code = JS_SCR,
                       data = data,
                       init = inits
 )
+#data is private$data_$covs(m = 1)
+X <- m$design_mats() #setup from gams formulas
+pars <- m$par()
+for(i in 1:length(pars)){
+  pars[[i]] 
+}
+#jagam will produce smooth code (mgcv function) and will need penalty too (penalty matrix will have prior)
+#Marra 2011 paper
 
 #still need to incorporate xy smooth, time smooth beta and phi, and spatial strata
-#list(lambda0 ~ trapstratum + trapopen + periodf, 
-#     sigma ~ trapstratum + trapopen + periodf, 
-#     beta ~ s(realtime, k = k_vals[i,1]), 
-#     phi ~ s(realtime, k = k_vals[i,2]), 
-#     D ~ s(x, y, k = D_k) + s(salinity, k = sal_k))
+# par_sal <- list(lambda0 ~ trapstratum + trapopen + periodf, #design matrix has row for each trap on each occasion
+#                 sigma ~ trapstratum + trapopen + periodf, #same as lambda0
+#                 beta ~ s(realtime, k = 6), 
+#                 phi ~ s(realtime, k = 3), 
+#                 D ~ s(x, y, k = 20) + s(salinity, k = 5))
