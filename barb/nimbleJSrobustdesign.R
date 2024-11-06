@@ -138,7 +138,7 @@ JS_SCR <- nimbleCode({
   } #t
   
   # Convert rates to probabilities
-  G <- transprobs(phi, b, n.prim.occasions)
+  G <- JSguts$transprobs(phi, b)
   
   probstate1[1:3] <- c(1-b[1], b[1], 0) #create variable for first primary alive prob
   # Likelihood
@@ -146,10 +146,7 @@ JS_SCR <- nimbleCode({
     #Home range center
     S[i, 1] ~ dunif(1, upperlimitx)    # x-coord of activity centers
     S[i, 2] ~ dunif(1, upperlimity)    # y coord of activity centers
-    hab[i] <- habmat[trunc(S[i, 1]), trunc(S[i, 2])] #sample x and y space, then check if AC is within mesh
-    ones[i] ~ dbern(hab[i]) #the ones trick
-    Smesh[i] <- whichmesh[trunc(S[i, 1]), trunc(S[i, 2])] #index of mesh
-    #relocate this to helper function
+    ones[i] ~ dbern(distfn$dhab(S[i,1:2])) #the ones trick
 
     #Data Augmentation
     real[i] ~ dbern(omega) 
@@ -161,14 +158,9 @@ JS_SCR <- nimbleCode({
     }#t (primary)
     #Observation process (multi-catch trap)
     for (s in 1:n.sec.occasions){
-      for(j in 1:J){
-        hus[j,s,i] <- lambda0 * exp(-( distmat[j, Smesh[i]] *  distmat[j, Smesh[i]])/(2*sigma2)) * trapusage[j, s]
-        exphus[j,s,i] <- exp(-hus[j,s,i])
-        Jprobs[i,s,j] <- hus[j,s,i]/sum(hus[1:J,s,i])*(1 - prod(exphus[1:J,s,i])) 
-      } #j
-      Jprobs[i,s,J+1] <- prod(exphus[1:J,s,i]) #J+1 indexed outcome is no detection
+      Jprobs[i,s,1:(J+1)] <- JSguts$probdetect(lambda, sigma, S[i,1:2])
       mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i, primary[s], 2]  * real[i] #is this right for data augmentation?
-      #I think the trap of detection is multinomial, but then the alive, present, and real are bernoulli... do I need a custom distribution?
+      #I think the trap of detection is multinomial
        y[i,s,1:(J+1)] ~ dmulti(prob = mu[i,s,1:(J+1)], size = 1) #multinomial, either detected at one trap j or not detected
     } #s (secondarys)
   } #i (individual)
@@ -180,7 +172,7 @@ JS_SCR <- nimbleCode({
 })
 
 
-distfn <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
+JSguts <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
 ##Test it here:
 
 distfnc <- compileNimble(distfn)
