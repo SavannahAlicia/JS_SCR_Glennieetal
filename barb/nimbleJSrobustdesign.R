@@ -1,6 +1,7 @@
 library(nimble)
 library(secr)
 library(raster)
+library(expm)
 
 #need functions sum, prod, which, expm::expm, usage,
 expmexpm <- function(x){
@@ -48,7 +49,7 @@ JSguts_nf <- nimbleFunction(
                           b = double(1)){ #note could vectorize to speed up
       G <- array(NA, dim = c(3,3,(n.prim.occasions - 1)))
       for(tp in 1:(n.prim.occasions - 1)){
-        G[1:3, 1:3, tp] <- calcGt(phi, b, tp)
+        G[1:3, 1:3, tp] <- calcGt(phi[1:(n.prim.occasions - 1)], b[1:n.prim.occasions], tp)
       }
       returnType(double(3))
       return(G)
@@ -58,7 +59,8 @@ JSguts_nf <- nimbleFunction(
                      tp = double()){
       # State membership transition probability 
         #Q is rates
-      Q <- G <- matrix(0, 3, 3)
+      Q <- matrix(0, 3, 3)
+      G <- matrix(0, 3, 3)
         Q[1:3,1:3] <- c( #note recruitment index starts at 1, but transitions happen between occasions 
           #log(1 - b[(tp+1)])/dt[tp],                   0,          0,
           NA,                                           0,          0,
@@ -87,7 +89,7 @@ JS_SCR <- nimbleCode({
   # Detection 
   lambda0 ~ dunif(0, 1) # tilda takes left thing and puts it in x spot
   #logit(lambda0) = sum(covs)
-  #lambda0Intercept (think about priors)
+  #lambda0Intercept ~ dnorm()(think about priors)
   #lambda0trapsstratumSoutheast
   #lambda0trapstratumCentral
   #lambda0trapstratumWest
@@ -119,7 +121,6 @@ JS_SCR <- nimbleCode({
   #sigmaperiodf9
   #sigmaperiodf10
   #sigmaperiodf11
-  sigma2 <- sigma * sigma
   
   # Data Augmentation 
   omega ~ dbeta(5,9) #somewhat informed prior for superpopulation
@@ -138,7 +139,7 @@ JS_SCR <- nimbleCode({
   } #t
   
   # Convert rates to probabilities
-  G <- JSguts$transprobs(phi, b)
+  G[1:3,1:3,1:(n.prim.occasions-1)] <- JSguts$transprobs(phi[1:(n.prim.occasions-1)], b[1:(n.prim.occasions-1)])
   
   probstate1[1:3] <- c(1-b[1], b[1], 0) #create variable for first primary alive prob
   # Likelihood
@@ -158,7 +159,7 @@ JS_SCR <- nimbleCode({
     }#t (primary)
     #Observation process (multi-catch trap)
     for (s in 1:n.sec.occasions){
-      Jprobs[i,s,1:(J+1)] <- JSguts$probdetect(lambda, sigma, S[i,1:2])
+      Jprobs[i,s,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
       mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i, primary[s], 2]  * real[i] #is this right for data augmentation?
       #I think the trap of detection is multinomial
        y[i,s,1:(J+1)] ~ dmulti(prob = mu[i,s,1:(J+1)], size = 1) #multinomial, either detected at one trap j or not detected
@@ -171,28 +172,20 @@ JS_SCR <- nimbleCode({
   Nsuper <- sum(real[1:M])
 })
 
-
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
-##Test it here:
-
-distfnc <- compileNimble(distfn)
-distfnc$probdetect(...)
-
-## in model code:
-ones[i] ~ distfn$dhab(s[i,1:2])
-jprob[i, n.sec.occasionss, 1:ntraps] <- distfn$probdetect(lambda, sigma, s[i, 1:2])
 
 
 #data prep
 m <- readRDS("~/Documents/UniStAndrews/BarBay_OpenSCR/results/m_sal5.Rds")
-n.prim.occasions <- 3
 n.fake.inds <- 1000
 ch <- m$data()$capthist()
 traps <- m$data()$traps()
 distmat <- m$data()$distances()
 mesh <- m$data()$mesh()
 primary <- m$data()$primary()
-trapusage <- usage(traps)
+n.prim.occasions <- length(unique(primary))
+dt <- diff(m$data()$time())
+n.sec.occasions <- sum(primary %in% 1:n.prim.occasions)
 
 #create capture history that has a row for no detections per occasion
 ch0 <- array(data = NA, dim = c(dim(ch)[1:2], dim(ch)[3]+1))
@@ -200,60 +193,45 @@ ch0[1:dim(ch)[1], 1:dim(ch)[2], 1:dim(ch)[3]] <- ch
 ch0[1:dim(ch)[1], 1:dim(ch)[2], (dim(ch)[3]+1)] <- ifelse(apply(ch, c(1,2), sum)>0, 0, 1)
 dimnames(ch0) <- list(dimnames(ch)[[1]], dimnames(ch)[[2]], c(dimnames(ch)[[3]], "no_detection"))
 
-#inits from fitted model
-beta <- m$get_par("beta", m = 1)
-phi <- m$get_par("phi", m = 1)
-dt <- diff(m$data()$time())
-n.sec.occasions <- sum(primary %in% 1:n.prim.occasions)
-#subset capture history
-ch13 <- ch0[,1:n.sec.occasions,]
-ch13 <- ch13[apply(ch13[,,-dim(ch13)[3]], 1, sum) > 0,,] #remove 0 chs
 #data augmentation
-nodets <- matrix(0, nrow = n.sec.occasions, ncol = dim(ch13)[3])
-nodets[,dim(ch13)[3]] <- 1
+nodets <- matrix(0, nrow = n.sec.occasions, ncol = dim(ch0)[3])
+nodets[,dim(ch0)[3]] <- 1
 aug <- aperm(replicate(n.fake.inds, nodets), c(3,1,2))
-augch13 <- abind::abind(ch13, aug, along = 1)
-dimnames(augch13)[2:3] <- dimnames(ch13)[2:3]
-real <- c(rep(1, dim(ch13)[1]), rep(NA, n.fake.inds))
-#subset trap usage
-trapusage13 <- trapusage[,1:n.sec.occasions]
-#subset primary code
-primary13 <- primary[1:n.sec.occasions]
-#subset primary dt
-dt13 <-  dt[1:n.prim.occasions]
+augch <- abind::abind(ch0, aug, along = 1)
+dimnames(augch)[2:3] <- dimnames(ch0)[2:3]
+
+
 #convert mesh to raster matrix of 1 and 
 habmat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh))))
 whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
 M <- length(real)
 
-
-data <- list(y = augch13, 
-             real = real,
+data <- list(y = augch, 
+             real = c(rep(1, dim(ch0)[1]), rep(NA, n.fake.inds)),
              habmat = as.matrix(habmat),
              whichmesh = as.matrix(whichmesh),
-             trapusage = trapusage13,
+             trapusage = usage(traps),
              distmat = distmat,
-             dt = dt13,
+             dt = dt,
              upperlimitx = ncol(habmat)+1,
              upperlimity = nrow(habmat)+1,
              ones = rep(1, M))
-
 
 constants <- list(n.prim.occasions = n.prim.occasions,
                   n.sec.occasions = n.sec.occasions,
                   J = nrow(traps),
                   M = M,
-                  primary = primary13
+                  primary = primary
 )
 
 inits <- list(
-  phi = m$get_par("phi", m = 1, j = 1, s = 1)[1:2], 
   lambda0 = m$get_par("lambda0", m = 1, j = 1, s= 1, k = 1),
   sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1),
-  beta = m$get_par("beta", m = 1, j = 1, s = 1)[1:3] #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
+  phi = m$get_par("phi", m = 1, j = 1, s = 1), 
+  beta = m$get_par("beta", m = 1, j = 1, s = 1) #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
 )
 
-Rmodel <- nimbleModel(code = JS_SCR, 
+NimbleJSmodel <- nimbleModel(code = JS_SCR, 
                       constants = constants, 
                       data = data,
                       init = inits
