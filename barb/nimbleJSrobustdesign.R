@@ -74,7 +74,23 @@ JSguts_nf <- nimbleFunction(
         G[2:3,2:3] <- Rexpm((Q[2:3,2:3] * dt[tp])) #matrix exponential for competing states
         returnType(double(2))
         return(G)
+    },
+    dmulti_trap = function(x = double(0), #from 1 to J+1 where J+1 is no detection
+                           prob = double(1),
+                           z = double(0),
+                           real = double(0),
+                           log = logical(0, default = FALSE)){
+      ans <- 0
+      if (z == 1 & real == 1){ #if alive and real (note could check without this logic in case logic breaks things)
+        ans <- log(prob[x])
       }
+      returnType(double(0))
+      if (log){
+        return(ans)
+      } else {
+        return(exp(ans))
+      } 
+    }
   )
 )
 
@@ -127,7 +143,7 @@ JS_SCR <- nimbleCode({
   
   # Survival and Recruitment Rates
     # Dirichlet prior for entry probabilities
-  alpha[1:n.prim.occasions] <- rep(1, n.prim.occasions) 
+  alpha[1:n.prim.occasions] <- rep(1, n.prim.occasions) #make this a constant instead
   beta[1:n.prim.occasions] ~ ddirch(alpha[1:n.prim.occasions])
 
   # Convert entry probs to conditional entry probs
@@ -145,9 +161,9 @@ JS_SCR <- nimbleCode({
   # Likelihood
   for (i in 1:M){
     #Home range center
-    S[i, 1] ~ dunif(1, upperlimitx)    # x-coord of activity centers
+    S[i, 1] ~ dunif(1, upperlimitx)    # indices on the matrix from 1 to dim + 1
     S[i, 2] ~ dunif(1, upperlimity)    # y coord of activity centers
-    ones[i] ~ dbern(distfn$dhab(S[i,1:2])) #the ones trick
+    ones[i] ~ dbern(JSguts$dhab(S[i,1:2])) #the ones trick
 
     #Data Augmentation
     real[i] ~ dbern(omega) 
@@ -158,9 +174,9 @@ JS_SCR <- nimbleCode({
       z[i, t, 1:3] ~ dmulti(prob = probstate[i,(t-1),1:3], size = 1)
     }#t (primary)
     #Observation process (multi-catch trap)
+    Jprobs[i,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
     for (s in 1:n.sec.occasions){
-      Jprobs[i,s,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
-      mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * z[i, primary[s], 2]  * real[i] #is this right for data augmentation?
+      mu[i,s,1:(J+1)] <- Jprobs[i,1:(J+1)] * z[i, primary[s], 2]  * real[i] #is this right for data augmentation?
       #I think the trap of detection is multinomial
        y[i,s,1:(J+1)] ~ dmulti(prob = mu[i,s,1:(J+1)], size = 1) #multinomial, either detected at one trap j or not detected
     } #s (secondarys)
@@ -172,12 +188,10 @@ JS_SCR <- nimbleCode({
   Nsuper <- sum(real[1:M])
 })
 
-JSguts <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
-
 
 #data prep
 m <- readRDS("~/Documents/UniStAndrews/BarBay_OpenSCR/results/m_sal5.Rds")
-n.fake.inds <- 1000
+n.fake.inds <- 10#1000
 ch <- m$data()$capthist()
 traps <- m$data()$traps()
 distmat <- m$data()$distances()
@@ -204,18 +218,19 @@ dimnames(augch)[2:3] <- dimnames(ch0)[2:3]
 #convert mesh to raster matrix of 1 and 
 habmat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh))))
 whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
+real <- c(rep(1, dim(ch0)[1]), rep(NA, n.fake.inds))
 M <- length(real)
 
+trapusage <- usage(traps)
+habmat <- as.matrix(habmat)
+whichmesh <- as.matrix(whichmesh)
+
 data <- list(y = augch, 
-             real = c(rep(1, dim(ch0)[1]), rep(NA, n.fake.inds)),
-             habmat = as.matrix(habmat),
-             whichmesh = as.matrix(whichmesh),
-             trapusage = usage(traps),
-             distmat = distmat,
-             dt = dt,
+             real = real,
              upperlimitx = ncol(habmat)+1,
              upperlimity = nrow(habmat)+1,
              ones = rep(1, M))
+#only pass in things the model code needs, not setup code
 
 constants <- list(n.prim.occasions = n.prim.occasions,
                   n.sec.occasions = n.sec.occasions,
@@ -231,10 +246,14 @@ inits <- list(
   beta = m$get_par("beta", m = 1, j = 1, s = 1) #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
 )
 
+JSguts <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
+
 NimbleJSmodel <- nimbleModel(code = JS_SCR, 
                       constants = constants, 
                       data = data,
-                      init = inits
+                      init = inits,
+                      calculate = false #avoids calculation step, can do model$calculate later if it was too slow
+                      #check = false #won't check to make sure everything's right
 )
 #data is private$data_$covs(m = 1)
 X <- m$design_mats() #setup from gams formulas
