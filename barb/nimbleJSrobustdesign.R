@@ -74,23 +74,23 @@ JSguts_nf <- nimbleFunction(
         G[2:3,2:3] <- Rexpm((Q[2:3,2:3] * dt[tp])) #matrix exponential for competing states
         returnType(double(2))
         return(G)
-    },
-    dmulti_trap = function(x = double(0), #from 1 to J+1 where J+1 is no detection
-                           prob = double(1),
-                           z = double(0),
-                           real = double(0),
-                           log = logical(0, default = FALSE)){
-      ans <- 0
-      if (z == 1 & real == 1){ #if alive and real (note could check without this logic in case logic breaks things)
-        ans <- log(prob[x])
-      }
-      returnType(double(0))
-      if (log){
-        return(ans)
-      } else {
-        return(exp(ans))
-      } 
-    }
+    }#,
+    # dmulti_trap = function(x = double(0), #from 1 to J+1 where J+1 is no detection
+    #                        prob = double(1),
+    #                        z = double(0),
+    #                        real = double(0),
+    #                        log = logical(0, default = FALSE)){
+    #   ans <- 0
+    #   if (z == 1 & real == 1){ #if alive and real (note could check without this logic in case logic breaks things)
+    #     ans <- log(prob[x])
+    #   }
+    #   returnType(double(0))
+    #   if (log){
+    #     return(ans)
+    #   } else {
+    #     return(exp(ans))
+    #   } 
+    # }
   )
 )
 
@@ -143,7 +143,6 @@ JS_SCR <- nimbleCode({
   
   # Survival and Recruitment Rates
     # Dirichlet prior for entry probabilities
-  alpha[1:n.prim.occasions] <- rep(1, n.prim.occasions) #make this a constant instead
   beta[1:n.prim.occasions] ~ ddirch(alpha[1:n.prim.occasions])
 
   # Convert entry probs to conditional entry probs
@@ -167,25 +166,25 @@ JS_SCR <- nimbleCode({
 
     #Data Augmentation
     real[i] ~ dbern(omega) 
-    #State process
-    z[i, 1, 1:3] ~ dmulti(prob = probstate1[1:3], size = 1)  #first primary, i is alive if it recruits into primary 1
-    for (t in 2:n.prim.occasions){
-      probstate[i,(t-1), 1:3] <- z[i, (t-1), 1:3] %*% G[1:3,1:3,(t-1)]
-      z[i, t, 1:3] ~ dmulti(prob = probstate[i,(t-1),1:3], size = 1)
+    #State process (z is now index of state (1,2,3))
+    z[i, 1] ~ dcat(prob = probstate1[1:3])  #first primary, i is alive if it recruits into primary 1
+    for (t in 2:n.prim.occasions){ #just the row of G for the state z
+      z[i, t] ~ dcat(prob = G[z[i,t-1],1:3,(t-1)])
     }#t (primary)
     #Observation process (multi-catch trap)
     Jprobs[i,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
     for (s in 1:n.sec.occasions){
-      mu[i,s,1:(J+1)] <- Jprobs[i,1:(J+1)] * z[i, primary[s], 2]  * real[i] #is this right for data augmentation?
+      mu[i,s,1:(J+1)] <- Jprobs[i,1:(J+1)] * (z[i, primary[s]] == 2)  * real[i] #is this right for data augmentation?
       #I think the trap of detection is multinomial
-       y[i,s,1:(J+1)] ~ dmulti(prob = mu[i,s,1:(J+1)], size = 1) #multinomial, either detected at one trap j or not detected
+       y[i,s] ~ dcat(prob = mu[i,s,1:(J+1)]) #y is which trap detected or J+1 for none
     } #s (secondarys)
   } #i (individual)
   #Derived parameters
-  for(t in 1:n.prim.occasions) {
-    N[t] <- sum(z[1:M,t,2]*real[1:M]) # no. alive for each year
-  }
-  Nsuper <- sum(real[1:M])
+  #for(t in 1:n.prim.occasions) {
+   # N[t] <- sum(z[1:M,t,2]*real[1:M]) # no. alive for each year
+    #change to sum of z that equal 2
+  #}
+  #Nsuper <- sum(real[1:M])
 })
 
 
@@ -225,15 +224,16 @@ trapusage <- usage(traps)
 habmat <- as.matrix(habmat)
 whichmesh <- as.matrix(whichmesh)
 
-data <- list(y = augch, 
+data <- list(y = apply(augch, c(1,2), FUN = function(x){which(x > 0)}), #index trap (or lack of dets)
              real = real,
+             ones = rep(1, M),
              upperlimitx = ncol(habmat)+1,
-             upperlimity = nrow(habmat)+1,
-             ones = rep(1, M))
+             upperlimity = nrow(habmat)+1)
 #only pass in things the model code needs, not setup code
 
 constants <- list(n.prim.occasions = n.prim.occasions,
                   n.sec.occasions = n.sec.occasions,
+                  alpha = rep(1, n.prim.occasions), #make this a constant instead
                   J = nrow(traps),
                   M = M,
                   primary = primary
