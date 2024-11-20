@@ -94,7 +94,22 @@ JSguts_nf <- nimbleFunction(
   )
 )
 
-
+joint_prob <- function(sec_vec, #vector of secondary indices
+                       y_sec, #vector of trap of capture for each sec_vec
+                       state, #1 unborn, 2 alive, 3 dead
+                       i,
+                       Jprobs){
+  if(state == 2){#if alive
+    prob <- prod(Jprobs[i,sec_vec,y_vec])
+  } else {#if unborn or dead
+    if (all(y_vec == (0))){ #all secondaries had no detections
+      prob <- 1
+    } else { #at least one detection
+      prob <- 0
+    }
+  }
+  return(prob)
+}
 
 
 
@@ -224,7 +239,10 @@ trapusage <- usage(traps)
 habmat <- as.matrix(habmat)
 whichmesh <- as.matrix(whichmesh)
 
-data <- list(y = apply(augch, c(1,2), FUN = function(x){which(x > 0)}), #index trap (or lack of dets)
+datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
+datay[which(datay == (nrow(traps)+1))] <- 0
+                
+data <- list(y = datay, #index trap (or lack of dets)
              real = real,
              ones = rep(1, M),
              upperlimitx = ncol(habmat)+1,
