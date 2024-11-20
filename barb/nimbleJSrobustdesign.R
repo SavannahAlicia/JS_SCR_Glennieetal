@@ -172,9 +172,9 @@ JS_SCR <- nimbleCode({
       z[i, t] ~ dcat(prob = G[z[i,t-1],1:3,(t-1)])
     }#t (primary)
     #Observation process (multi-catch trap)
-    Jprobs[i,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
+    Jprobs[i,1:n.sec.occasions,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
     for (s in 1:n.sec.occasions){
-      mu[i,s,1:(J+1)] <- Jprobs[i,1:(J+1)] * (z[i, primary[s]] == 2)  * real[i] #is this right for data augmentation?
+      mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * (z[i, primary[s]] == 2)  * real[i] #is this right for data augmentation?
       #I think the trap of detection is multinomial
        y[i,s] ~ dcat(prob = mu[i,s,1:(J+1)]) #y is which trap detected or J+1 for none
     } #s (secondarys)
@@ -190,7 +190,7 @@ JS_SCR <- nimbleCode({
 
 #data prep
 m <- readRDS("~/Documents/UniStAndrews/BarBay_OpenSCR/results/m_sal5.Rds")
-n.fake.inds <- 10#1000
+n.fake.inds <- 1000
 ch <- m$data()$capthist()
 traps <- m$data()$traps()
 distmat <- m$data()$distances()
