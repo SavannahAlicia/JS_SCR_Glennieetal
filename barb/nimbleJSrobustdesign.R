@@ -162,7 +162,7 @@ JS_SCR <- nimbleCode({
     #Home range center
     S[i, 1] ~ dunif(1, upperlimitx)    # indices on the matrix from 1 to dim + 1
     S[i, 2] ~ dunif(1, upperlimity)    # y coord of activity centers
-    ones[i] ~ dbern(JSguts$dhab(S[i,1:2])) #the ones trick
+    ones[i] ~ JSguts$dhab(S[i,1:2]) #the ones trick
 
     #Data Augmentation
     real[i] ~ dbern(omega) 
@@ -252,9 +252,11 @@ NimbleJSmodel <- nimbleModel(code = JS_SCR,
                       constants = constants, 
                       data = data,
                       init = inits,
-                      calculate = false #avoids calculation step, can do model$calculate later if it was too slow
+                      calculate = FALSE#, #avoids calculation step, can do model$calculate later if it was too slow
                       #check = false #won't check to make sure everything's right
 )
+
+NimbleJSmodel_calculated <- NimbleJSmodel$calculate()
 #data is private$data_$covs(m = 1)
 X <- m$design_mats() #setup from gams formulas
 pars <- m$par()
