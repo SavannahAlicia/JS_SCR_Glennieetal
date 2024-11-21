@@ -160,14 +160,14 @@ dcapt_forward <- nimbleFunction(
            # G = double(2), # Transition prob matrix
            # init = double(0)
 # Jprobs <- do.call('rbind', lapply(1:9, FUN = function(x){rdirch(1, rep(1,4))}))
-G <- array(rbind(c(0.3, 0.7, 0), c(0, 0.99, 0.01), c(0, 0, 1)), c(3, 3, 2))
-
-# debugonce(dcapt_forward)
-dcapt_forward(x=c(4,4,4,1,1,4,4,4,4), primary = c(1,1,1,2,2,3,3,3,3), 
-  real = 1, Jprobs, G, init = 1, log = FALSE)
-Jprobs[,1]*0.99^2
-prod(Jprobs[1:5,1])*0.99*(0.99*prod(Jprobs[6:9,4]) + 0.01)
-1*0.7*prod(Jprobs[4:5,1])*(0.99*prod(Jprobs[6:9,4]) + 0.01)
+# G <- array(rbind(c(0.3, 0.7, 0), c(0, 0.99, 0.01), c(0, 0, 1)), c(3, 3, 2))
+# 
+# # debugonce(dcapt_forward)
+# dcapt_forward(x=c(4,4,4,1,1,4,4,4,4), primary = c(1,1,1,2,2,3,3,3,3), 
+#   real = 1, Jprobs, G, init = 1, log = FALSE)
+# Jprobs[,1]*0.99^2
+# prod(Jprobs[1:5,1])*0.99*(0.99*prod(Jprobs[6:9,4]) + 0.01)
+# 1*0.7*prod(Jprobs[4:5,1])*(0.99*prod(Jprobs[6:9,4]) + 0.01)
 
 #spatial
 JS_SCR <- nimbleCode({
@@ -237,7 +237,7 @@ JS_SCR <- nimbleCode({
 
     #Data Augmentation
     real[i] ~ dbern(omega) 
-    initstate[i] <- dcat(probstate1)
+    initstate[i] ~ dcat(probstate1[1:3])
     Jprobs[i,1:n.sec.occasions,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
     y[i,1:n.sec.occasions] ~ dcapt_forward(primary = primary[1:n.sec.occasions], 
                                             real = real[i], Jprobs = Jprobs[i,1:n.sec.occasions,1:(J+1)],
@@ -291,7 +291,6 @@ habmat <- as.matrix(habmat)
 whichmesh <- as.matrix(whichmesh)
 
 datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
-datay[which(datay == (nrow(traps)+1))] <- 0
                 
 data <- list(y = datay, #index trap (or lack of dets)
              real = real,
