@@ -94,24 +94,80 @@ JSguts_nf <- nimbleFunction(
   )
 )
 
-joint_prob <- function(sec_vec, #vector of secondary indices
-                       y_sec, #vector of trap of capture for each sec_vec
-                       state, #1 unborn, 2 alive, 3 dead
-                       i,
-                       Jprobs){
-  if(state == 2){#if alive
-    prob <- prod(Jprobs[i,sec_vec,y_vec])
-  } else {#if unborn or dead
-    if (all(y_vec == (0))){ #all secondaries had no detections
-      prob <- 1
-    } else { #at least one detection
-      prob <- 0
+
+dcapt_forward <- nimbleFunction(
+  run = function(x = double(1), # Observed capture history for one animal
+           primary = double(1), # vector of primary indices for each secondary
+           real = double(),     # real or not real animal?
+           Jprobs = double(2), # probability of detection for each secondary at each trap
+           G = double(3), # Transition prob matrix
+           init = double(0),
+           log = logical(0, default=TRUE)){ # detection probability for a single animal
+    ## Check if it's not real then prob = 1, unless it was observed, then shit.
+    J1 <- dim(Jprobs)[2]
+    isobs0 <- all(x == J1)
+    if(real == 0){
+      ans <- 1
+      if(!isobs0){
+        ans <- 0
+      }
+      if(log) return(log(ans))
+      else return(ans)
     }
+    
+    ## Now to forward solve.
+    ## State 1: unborn
+    ## State 2: alive
+    ## State 3: dead
+    nstates <- dim(G)[1]
+    nprimary <- max(primary)
+    pi <- nimNumeric(value = 0, length = nstates) # prob of state as we go forward
+    pobs <- nimNumeric(value = 0, length = nstates) # Pdetect given state
+    logL <- 0
+    pi[init] <- 1
+    for( tp in 1:nprimary ){
+      idx <- which(primary == tp)
+      isobs <- any(x[idx] != J1)
+      ## Find probability of obs within the primary.
+      for( k in 1:nstates ){
+        if(k == 1 | k == 3){
+          if(isobs) 
+            pobs[k] <- 0
+          else 
+            pobs[k] <- 1
+        }else{
+          lp <- 0
+          for( j in seq_along(idx) ) lp <- lp + log(Jprobs[idx[j],x[idx[j]]])
+          pobs[k] <- exp(lp)
+        }
+      }      
+      pi <- pi * pobs
+      sumpi <- sum(pi)
+      logL <- logL + log(sumpi)
+      if (tp != nstates) pi <- (pi %*% G[,,tp])/sumpi
+    }
+    ans <- sum(pi)
+    returnType(double())
+    if(log) return(logL)
+    else return(exp(logL))
   }
-  return(prob)
-}
+)
 
+# x = double(1), # Observed capture history for one animal
+           # primary = double(1), # vector of primary indices for each secondary
+           # real = double(),     # real or not real animal?
+           # Jprobs = double(2), # probability of detection for each secondary at each trap
+           # G = double(2), # Transition prob matrix
+           # init = double(0)
+# Jprobs <- do.call('rbind', lapply(1:9, FUN = function(x){rdirch(1, rep(1,4))}))
+# G <- rbind(c(0.3, 0.7, 0), c(0, 0.99, 0.01), c(0, 0, 1))
 
+# debugonce(dcapt_forward)
+# dcapt_forward(x=c(4,4,4,1,1,4,4,4,4), primary = c(1,1,1,2,2,3,3,3,3), 
+  # real = 1, Jprobs, G, init = 1, log = FALSE)
+# Jprobs[,1])*0.99^2
+# prod(Jprobs[1:5,1])*0.99*(0.99*prod(Jprobs[6:9,4]) + 0.01)
+# 1*0.7*prod(Jprobs[4:5,1])*(0.99*prod(Jprobs[6:9,4]) + 0.01)
 
 #spatial
 JS_SCR <- nimbleCode({
@@ -181,20 +237,14 @@ JS_SCR <- nimbleCode({
 
     #Data Augmentation
     real[i] ~ dbern(omega) 
-    #State process (z is now index of state (1,2,3))
-    z[i, 1] ~ dcat(prob = probstate1[1:3])  #first primary, i is alive if it recruits into primary 1
-    for (t in 2:n.prim.occasions){ #just the row of G for the state z
-      z[i, t] ~ dcat(prob = G[z[i,t-1],1:3,(t-1)])
-    }#t (primary)
-    #Observation process (multi-catch trap)
+    initstate[i] <- dcat(probstate1)
     Jprobs[i,1:n.sec.occasions,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
-    for (s in 1:n.sec.occasions){
-      mu[i,s,1:(J+1)] <- Jprobs[i,s,1:(J+1)] * (z[i, primary[s]] == 2)  * real[i] #is this right for data augmentation?
-      #I think the trap of detection is multinomial
-       y[i,s] ~ dcat(prob = mu[i,s,1:(J+1)]) #y is which trap detected or J+1 for none
-    } #s (secondarys)
-  } #i (individual)
+    y[i,1:n.sec.occasions] ~ dcapt_forward(primary = primary[1:n.sec.occasions], 
+                                            real = real[i], Jprobs = Jprobs[i,1:n.sec.occasions,1:(J+1)],
+                                            G = G[1:3,1:3,1:(n.prim.occasions-1)], init = initstate[i])
   #Derived parameters
+  ## THIS WILL NEED A FORWARD BACKWARD SOLVE!!!
+  ## ******************************************
   #for(t in 1:n.prim.occasions) {
    # N[t] <- sum(z[1:M,t,2]*real[1:M]) # no. alive for each year
     #change to sum of z that equal 2
