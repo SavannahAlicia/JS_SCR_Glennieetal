@@ -99,17 +99,17 @@ dcapt_forward <- nimbleFunction(
   run = function(x = double(1), # Observed capture history for one animal
            primary = double(1), # vector of primary indices for each secondary
            real = double(),     # real or not real animal?
-           Jprobs = double(2), # probability of detection for each secondary at each trap
+           Jprobs = double(2), # probability of detection for each secondary at each trap (single individual)
            G = double(3), # Transition prob matrix
            init = double(0),
-           log = logical(0, default=TRUE)){ # detection probability for a single animal
+           log = logical(0, default=TRUE)){
     ## Check if it's not real then prob = 1, unless it was observed, then shit.
-    J1 <- dim(Jprobs)[2]
-    isobs0 <- all(x == J1)
-    if(real == 0){
-      ans <- 1
-      if(!isobs0){
-        ans <- 0
+    J1 <- dim(Jprobs)[2] #number of possible chs within sec
+    isobs0 <- all(x == J1) #all unobserved
+    if(real == 0){ #if augmented individual
+      ans <- 1 #it must be unobserved
+      if(!isobs0){ #if it was observed
+        ans <- 0 #that's not possible
       }
       if(log) return(log(ans))
       else return(ans)
@@ -124,27 +124,30 @@ dcapt_forward <- nimbleFunction(
     pi <- nimNumeric(value = 0, length = nstates) # prob of state as we go forward
     pobs <- nimNumeric(value = 0, length = nstates) # Pdetect given state
     logL <- 0
-    pi[init] <- 1
+    pi[init] <- 1 #init specifies number of state we begin in
     for( tp in 1:nprimary ){
-      idx <- which(primary == tp)
-      isobs <- any(x[idx] != J1)
+      idx <- which(primary == tp) #secondaries in primary
+      isobs <- any(x[idx] != J1) 
       ## Find probability of obs within the primary.
-      for( k in 1:nstates ){
-        if(k == 1 | k == 3){
-          if(isobs) 
-            pobs[k] <- 0
-          else 
-            pobs[k] <- 1
-        }else{
+      for( state in 1:nstates ){
+        if(state == 1 | state == 3){ #if unborn or dead
+          if(isobs) {
+            pobs[state] <- 0 #prob 0 of being observed
+         } else {
+            pobs[state] <- 1 #prob 1 of being unobserved
+         }
+        } else {
           lp <- 0
-          for( j in seq_along(idx) ) lp <- lp + log(Jprobs[idx[j],x[idx[j]]])
-          pobs[k] <- exp(lp)
+          for( j in seq_along(idx) ) {lp <- lp + log(Jprobs[idx[j],x[idx[j]]])}
+          pobs[state] <- exp(lp) #product of probs across secondaries within primary
         }
       }      
-      pi <- pi * pobs
-      sumpi <- sum(pi)
-      logL <- logL + log(sumpi)
-      if (tp != nstates) pi <- ((pi %*% G[,,tp])/sumpi)[1,]
+      pi <- pi * pobs #prob of ch and state
+      sumpi <- sum(pi) #summed across states = prob of ch
+      logL <- logL + log(sumpi) 
+      if (tp != nstates) {#for all but last primary, times transition probs
+        pi <- ((pi %*% G[,,tp])/sumpi)[1,] #
+        } 
     }
     ans <- sum(pi)
     returnType(double())
@@ -294,9 +297,7 @@ datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
                 
 data <- list(y = datay, #index trap (or lack of dets)
              real = real,
-             ones = rep(1, M),
-             upperlimitx = ncol(habmat)+1,
-             upperlimity = nrow(habmat)+1)
+             ones = rep(1, M))
 #only pass in things the model code needs, not setup code
 
 constants <- list(n.prim.occasions = n.prim.occasions,
@@ -304,7 +305,9 @@ constants <- list(n.prim.occasions = n.prim.occasions,
                   alpha = rep(1, n.prim.occasions), #make this a constant instead
                   J = nrow(traps),
                   M = M,
-                  primary = primary
+                  primary = primary,
+                  upperlimitx = ncol(habmat)+1,
+                  upperlimity = nrow(habmat)+1
 )
 
 inits <- list(
@@ -316,6 +319,7 @@ inits <- list(
 
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
 
+startdefineT <- Sys.time()
 NimbleJSmodel <- nimbleModel(code = JS_SCR, 
                       constants = constants, 
                       data = data,
@@ -323,8 +327,10 @@ NimbleJSmodel <- nimbleModel(code = JS_SCR,
                       calculate = FALSE#, #avoids calculation step, can do model$calculate later if it was too slow
                       #check = false #won't check to make sure everything's right
 )
+totaldefineT <- Sys.time() - startdefineT
 
-NimbleJSmodel_calculated <- NimbleJSmodel$calculate()
+cNimbleJSmodel <- compileNimble(NimbleJSmodel)
+
 #data is private$data_$covs(m = 1)
 X <- m$design_mats() #setup from gams formulas
 pars <- m$par()
