@@ -258,7 +258,7 @@ JS_SCR <- nimbleCode({
 
 
 #data prep
-m <- readRDS("~/Documents/UniStAndrews/BarBay_OpenSCR/results/m_sal5.Rds")
+m <- readRDS("m_sal5.Rds") #put it in repo
 n.fake.inds <- 1000
 ch <- m$data()$capthist()
 traps <- m$data()$traps()
@@ -268,6 +268,7 @@ primary <- m$data()$primary()
 n.prim.occasions <- length(unique(primary))
 dt <- diff(m$data()$time())
 n.sec.occasions <- sum(primary %in% 1:n.prim.occasions)
+trapusage <- usage(traps)
 
 #create capture history that has a row for no detections per occasion
 ch0 <- array(data = NA, dim = c(dim(ch)[1:2], dim(ch)[3]+1))
@@ -284,12 +285,10 @@ dimnames(augch)[2:3] <- dimnames(ch0)[2:3]
 
 
 #convert mesh to raster matrix of 1 and 
-habmat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh))))
+habmat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh)))) #change from NA to 0 and handle log0
 whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
 real <- c(rep(1, dim(ch0)[1]), rep(NA, n.fake.inds))
 M <- length(real)
-
-trapusage <- usage(traps)
 habmat <- as.matrix(habmat)
 whichmesh <- as.matrix(whichmesh)
 
@@ -302,7 +301,7 @@ data <- list(y = datay, #index trap (or lack of dets)
 
 constants <- list(n.prim.occasions = n.prim.occasions,
                   n.sec.occasions = n.sec.occasions,
-                  alpha = rep(1, n.prim.occasions), #make this a constant instead
+                  alpha = rep(1, n.prim.occasions), 
                   J = nrow(traps),
                   M = M,
                   primary = primary,
@@ -329,8 +328,42 @@ NimbleJSmodel <- nimbleModel(code = JS_SCR,
 )
 totaldefineT <- Sys.time() - startdefineT
 
-cNimbleJSmodel <- compileNimble(NimbleJSmodel)
 
+#if you want to try to figure out errors to do with funcitons, try compiling functions by themselves
+#compiling the full model will do all of it
+#example: compileNimble(JSguts) to check that it compiles, then I can run everythign within in c++ so its faster to check
+
+cNimbleJSmodel <- compileNimble(NimbleJSmodel)
+#conf <- configureMCMC #just defines mcmc, samplers for which
+# if $setmontitors what to track
+
+# model <- nimbleModel(modelCode, data = data, inits = inits, constants = constants, buildDerivs = TRUE)
+# conf <- configureMCMC(model)
+# conf$setMonitors(c("logalpha", "logbeta", "p0", "q", "sigma"))
+# mcmc <- buildMCMC(conf)
+# cmodel <- compileNimble(model)
+# cmcmc <- compileNimble(mcmc, project = model)
+# # mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
+# cmcmc$run(100000) #naybe 100 just to see if its slow, can access what everything is in the model
+# mvSamples <- cmcmc$mvSamples
+# samples <- as.matrix(mvSamples)
+# out <- coda::mcmc(samples[-(1:5000),])	# Burn in
+# mcmc.sum <- do.call("cbind", summary(out))
+
+# conf$removeSamplers('X')
+# for(i in 1:M){
+#   conf$addSampler(target = paste0('X[', i, ', 1:2]'), 
+#                   type = 'RW_block', silent = TRUE))
+# }
+# 
+# conf$removeSamplers('sigma')
+# conf$addSampler(target = 'sigma', 
+#                 type = 'slice', silent = TRUE, control = list(adaptive = TRUE, scaleWidth = 0.5))	
+# 
+# i just want point in space, random walk, i want to block sample acs per animal
+#daniel turk, devalpine, efficient block samplers for MCMC large scale bayesian estimation of scr
+
+has context menu
 #data is private$data_$covs(m = 1)
 X <- m$design_mats() #setup from gams formulas
 pars <- m$par()
