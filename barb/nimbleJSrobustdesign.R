@@ -156,6 +156,7 @@ dcapt_forward <- nimbleFunction(
   }
 )
 
+#Testing:
 # x = double(1), # Observed capture history for one animal
            # primary = double(1), # vector of primary indices for each secondary
            # real = double(),     # real or not real animal?
@@ -178,39 +179,7 @@ JS_SCR <- nimbleCode({
   # Priors and constraints
   # Detection 
   lambda0 ~ dunif(0, 1) # tilda takes left thing and puts it in x spot
-  #logit(lambda0) = sum(covs)
-  #lambda0Intercept ~ dnorm()(think about priors)
-  #lambda0trapsstratumSoutheast
-  #lambda0trapstratumCentral
-  #lambda0trapstratumWest
-  #lambda0trapopensheltered
-  #lambda0periodf2
-  #lambda0periodf3
-  #lambda0periodf4
-  #lambda0periodf5
-  #lambda0periodf6
-  #lambda0periodf7
-  #lambda0periodf8
-  #lambda0periodf9
-  #lambda0periodf10
-  #lambda0periodf11
-  #also how to make sure that sum of possible lambdas is between 0 and 1?
-  sigma ~ dunif(0, 10000) #will also need multiple sigmas
-  #sigmaIntercept
-  #sigmatrapsstratumSoutheast
-  #sigmatrapstratumCentral
-  #sigmatrapstratumWest
-  #sigmatrapopensheltered
-  #sigmaperiodf2
-  #sigmaperiodf3
-  #sigmaperiodf4
-  #sigmaperiodf5
-  #sigmaperiodf6
-  #sigmaperiodf7
-  #sigmaperiodf8
-  #sigmaperiodf9
-  #sigmaperiodf10
-  #sigmaperiodf11
+  sigma ~ dunif(0, 10000) #will also need multiple sigmas and lambda0s for covs
   
   # Data Augmentation 
   omega ~ dbeta(5,9) #somewhat informed prior for superpopulation
