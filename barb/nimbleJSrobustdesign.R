@@ -295,9 +295,9 @@ NimbleJSmodel <- nimbleModel(code = JS_SCR,
 )
 totaldefineT <- Sys.time() - startdefineT
 
-test <- compileNimble(dcapt_forward)
-test$dcapt_marg(1, 1, Jprobs = rep(0.25, nrow(traps)), G = NimbleJSmodel$G, c(0,1,0))
-dcapt_forward$dcapt_marg(x=1, real = 1, Jprobs = NimbleJSmodel$Jprobs[1,]+0.05, G = NimbleJSmodel$G, init = 2)
+# test <- compileNimble(dcapt_forward)
+# test$dcapt_marg(1, 1, Jprobs = rep(0.25, nrow(traps)), G = NimbleJSmodel$G, c(0,1,0))
+# dcapt_forward$dcapt_marg(x=1, real = 1, Jprobs = NimbleJSmodel$Jprobs[1,]+0.05, G = NimbleJSmodel$G, init = 2)
 
 #if you want to try to figure out errors to do with funcitons, try compiling functions by themselves
 #compiling the full model will do all of it
