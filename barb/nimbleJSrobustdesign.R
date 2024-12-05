@@ -32,7 +32,7 @@ JSguts_nf <- nimbleFunction(
     probdetected = function(lambda = double(), 
                            sigma = double(), 
                            S = double(1)){
-      smesh <- whichmesh[trunc(S[1]), trunc(S[2])] #index of mesh
+      smesh <- whichmesh[trunc(S[2]), trunc(S[1])]  #index of mesh COLUMNS ARE X AND ROWS ARE Y!!!!! *PVDB
       jprobs <- numeric(value = 0, length = J)
       if(is.na(smesh)) return(jprobs) ## PVDB: Made it more robust. Just in case distance isn't calcualted make Jprobs 0.
       
@@ -125,20 +125,26 @@ dcapt_forward_internal <- nimbleFunction(
             keep <- which(trapusage[,occ] > 0)  ## Save a little compute time maybe...
             logpnotdet <- -sum(trapusage[keep,occ]*Jprobs[keep])
             ## If not detected then I'm done. Otherwise calc the prob of being det at just that trap.
-            if(ch[occ] == J+1)
+            if(ch[occ] == J+1) {
               lp <- lp + logpnotdet
-            else
-              lp <- lp + log(Jprobs[ch[occ]]) - log(-logpnotdet) + log(1-exp(logpnotdet)) ## log(pdetect/sum(pdetect) * (1-pnotdet))
+            }else{
+              ## If can't be detected, but was then return -infinity.
+              if(logpnotdet < 0) {
+                lp <- lp + log(Jprobs[ch[occ]]) - log(-logpnotdet) + log(1-exp(logpnotdet)) ## log(pdetect/sum(pdetect) * (1-pnotdet))
+              }else{
+                lp <- -Inf
+              }
+            }
           }
           pobs[state] <- exp(lp) #product of probs across secondaries within primary
         }
-      }      
+      }
       pi <- pi * pobs #prob of ch and state
       sumpi <- sum(pi) #summed across states = prob of ch
       logL <- logL + log(sumpi) 
-      if (tp < nprimary) {#for all but last primary, times transition probs
+      if (tp < nprimary) { #for all but last primary, times transition probs
         pi <- ((pi %*% G[,,tp])/sumpi)[1,] #
-        } 
+      }
     }
     ans <- sum(pi)
     returnType(double())
@@ -189,7 +195,7 @@ JS_SCR <- nimbleCode({
   } #t
   
   # Convert rates to probabilities
-  G[1:3,1:3,1:(n.prim.occasions-1)] <- JSguts$transprobs(phi[1:(n.prim.occasions-1)], b[1:(n.prim.occasions-1)])
+  G[1:3,1:3,1:(n.prim.occasions-1)] <- JSguts$transprobs(phi[1:(n.prim.occasions-1)], b[1:n.prim.occasions])  ## pvdb Index issue with b. Added 1.
   
   probstate1[1:3] <- c(1-b[1], b[1], 0) #create variable for first primary alive prob
   # Likelihood
@@ -271,7 +277,9 @@ inits <- list(
   lambda0 = m$get_par("lambda0", m = 1, j = 1, s= 1, k = 1),
   sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1),
   phi = m$get_par("phi", m = 1, j = 1, s = 1), 
-  beta = m$get_par("beta", m = 1, j = 1, s = 1) #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
+  beta = m$get_par("beta", m = 1, j = 1, s = 1)#, #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
+  ## initstate  ## Give reasonable inits for these!
+  ## S
 )
 
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
@@ -286,7 +294,7 @@ rm(aug)
 gc()
 
 startdefineT <- Sys.time()
-NimbleJSmodel <- nimbleModel(code = JS_SCR, 
+model <- nimbleModel(code = JS_SCR, 
                       constants = constants, 
                       data = data,
                       init = inits#,
@@ -294,6 +302,16 @@ NimbleJSmodel <- nimbleModel(code = JS_SCR,
                       # check = FALSE #won't check to make sure everything's right
 )
 totaldefineT <- Sys.time() - startdefineT
+
+model$simulate("S")
+model$simulate("initstate")
+model$calculate("Jprobs")
+model$calculate("id[1]")  ## check timing in C++
+model$Jprobs
+model$simulate("initstate")
+J <- nrow(traps)
+dcapt_forward$dcapt_marg(x = 1, real = 1, Jprobs = model$Jprobs[1,],
+                                            G = model$G[1:3,1:3,1:10], init = model$initstate[1])
 
 # test <- compileNimble(dcapt_forward)
 # test$dcapt_marg(1, 1, Jprobs = rep(0.25, nrow(traps)), G = NimbleJSmodel$G, c(0,1,0))
@@ -303,14 +321,17 @@ totaldefineT <- Sys.time() - startdefineT
 #compiling the full model will do all of it
 #example: compileNimble(JSguts) to check that it compiles, then I can run everythign within in c++ so its faster to check
 
-cNimbleJSmodel <- compileNimble(NimbleJSmodel)
+cmodel <- compileNimble(model)
 
-cNimbleJSmodel$calculate()  ## check timing in C++
-NimbleJSmodel$G ## Why is there an NA in there. Need to debug later...
+cmodel$calculate("G")  ## check timing in C++
+cmodel$calculate("Jprobs")  ## check timing in C++
+cmodel$calculate("id[1]")  ## check timing in C++
+cmodel$calculate()  ## RUNS EVERYTHING - posterior log likelihood.
+
 #conf <- configureMCMC #just defines mcmc, samplers for which
 # if $setmontitors what to track
 
-# model <- nimbleModel(modelCode, data = data, inits = inits, constants = constants, buildDerivs = TRUE)
+# model <- nimbleModel(modelCode, data = data, inits = inits, constants = constants) #, buildDerivs = TRUE) Dont' build derivs.
 # conf <- configureMCMC(model)
 # conf$setMonitors(c("logalpha", "logbeta", "p0", "q", "sigma"))
 # mcmc <- buildMCMC(conf)
