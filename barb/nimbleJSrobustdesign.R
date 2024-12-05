@@ -3,12 +3,14 @@ library(secr)
 library(raster)
 library(expm)
 
-#need functions expm
-Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expm::expm',
+## Nimble function that calls R matrix eponential from expm package. My base R didnt' have another expm function...
+Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expm',
                      returnType = double(2))
 
+## Main methods function in Nimble that contains all the data to reduce the complexity of the model structure in NIMBLE
+## Key is that we are going to put some cleverish caching in here so that we don't have to create too many jprobs in code.
 JSguts_nf <- nimbleFunction(
-  setup = function(habmat, whichmesh, distmat, trapusage, dt){
+  setup = function(habmat, whichmesh, distmat, dt){
     habmat <- as.matrix(habmat) #just in case stored as df or raster
     habmat[is.na(habmat)] <- 0  ## PVDB: Upated to make sure NA is actually 0.
     whichmesh <- as.matrix(whichmesh)
@@ -27,19 +29,15 @@ JSguts_nf <- nimbleFunction(
       else return(hab)
       returnType(double())
     },
-    probdetect = function(lambda = double(), 
+    probdetected = function(lambda = double(), 
                            sigma = double(), 
                            S = double(1)){
       smesh <- whichmesh[trunc(S[1]), trunc(S[2])] #index of mesh
-      jprobs <- matrix(0, nrow = n.sec.occasions, ncol = J+1)
+      jprobs <- numeric(value = 0, length = J)
       if(is.na(smesh)) return(jprobs) ## PVDB: Made it more robust. Just in case distance isn't calcualted make Jprobs 0.
-      hus0 <- lambda*exp(-dist2[1:J, smesh]/(2*sigma^2))
-      for( s in 1:n.sec.occasions ){
-        hus <- hus0*trapusage[,s]
-        jprobs[s, J + 1] <- exp(-sum(hus))
-        jprobs[s, 1:J] <- hus/sum(hus) * (1 - jprobs[s, J + 1])
-      }
-      returnType(double(2))
+      
+      jprobs <- lambda*exp(-dist2[1:J, smesh]/(2*sigma^2))  ## This could be more efficient. It's where bischoff only computes on nearby traps...
+      returnType(double(1))
       return(jprobs)
     },
     transprobs = function(phi = double(1), 
@@ -67,46 +65,31 @@ JSguts_nf <- nimbleFunction(
       G[2:3,2:3] <- Rexpm((Q[2:3,2:3] * dt[tp])) #matrix exponential for competing states
       returnType(double(2))
       return(G)
-    }#,
-    # dmulti_trap = function(x = double(0), #from 1 to J+1 where J+1 is no detection
-    #                        prob = double(1),
-    #                        z = double(0),
-    #                        real = double(0),
-    #                        log = logical(0, default = FALSE)){
-    #   ans <- 0
-    #   if (z == 1 & real == 1){ #if alive and real (note could check without this logic in case logic breaks things)
-    #     ans <- log(prob[x])
-    #   }
-    #   returnType(double(0))
-    #   if (log){
-    #     return(ans)
-    #   } else {
-    #     return(exp(ans))
-    #   } 
-    # }
+    }
   )
 )
 
-
 dcapt_forward_internal <- nimbleFunction(
-  setup = function(capthist){}, # Hold data to make model smaller.
+  setup = function(capthist, trapusage, primary){
+    J <- nrow(trapusage)
+    nprimary <- max(primary)
+    
+  }, # Hold data to make model smaller.
   run = function(){},
   methods = list(
     dcapt_marg = function(x = double(), # index of animal 1:M
-           primary = double(1), # vector of primary indices for each secondary
            real = double(),     # real or not real animal?
-           Jprobs = double(2), # probability of detection for each secondary at each trap (single individual)
+           Jprobs = double(1), # probability of detection for each secondary at each trap (single individual)
            G = double(3), # Transition prob matrix
            init = double(0),
            log = logical(0, default=TRUE)){
     ch <- capthist[x,]       
     ## Check if it's not real then prob = 1, unless it was observed, then shit.
-    J1 <- dim(Jprobs)[2] #number of possible chs within sec
-    isobs0 <- all(ch == J1) #all unobserved
-    if(real == 0){ #if augmented individual
-      ans <- 1 #it must be unobserved
-      if(!isobs0){ #if it was observed
-        ans <- 0 #that's not possible
+    isobs0 <- all(ch == J+1) #all unobserved
+    if(real == 0){ # if augmented individual
+      ans <- 1 # it must be unobserved
+      if(!isobs0){ # if it was observed
+        ans <- 0 # that's not possible
       }
       if(log) return(log(ans))
       else return(ans)
@@ -117,14 +100,14 @@ dcapt_forward_internal <- nimbleFunction(
     ## State 2: alive
     ## State 3: dead
     nstates <- dim(G)[1]
-    nprimary <- max(primary)
     pi <- nimNumeric(value = 0, length = nstates) # prob of state as we go forward
     pobs <- nimNumeric(value = 0, length = nstates) # Pdetect given state
     logL <- 0
     pi[init] <- 1 #init specifies number of state we begin in
-    for( tp in 1:nprimary ){
+        
+    for( tp in 1:(nprimary) ){
       idx <- which(primary == tp) #secondaries in primary
-      isobs <- any(ch[idx] != J1) 
+      isobs <- any(ch[idx] != (J+1))
       ## Find probability of obs within the primary.
       for( state in 1:nstates ){
         if(state == 1 | state == 3){ #if unborn or dead
@@ -135,14 +118,25 @@ dcapt_forward_internal <- nimbleFunction(
          }
         } else {
           lp <- 0
-          for( j in seq_along(idx) ) {lp <- lp + log(Jprobs[idx[j],ch[idx[j]]])}
+          for( j in seq_along(idx) ) {
+            occ <- idx[j]
+            ## Need to compute detection probs:
+            ## Part 1: Not detected but keep on log scale
+            keep <- which(trapusage[,occ] > 0)  ## Save a little compute time maybe...
+            logpnotdet <- -sum(trapusage[keep,occ]*Jprobs[keep])
+            ## If not detected then I'm done. Otherwise calc the prob of being det at just that trap.
+            if(ch[occ] == J+1)
+              lp <- lp + logpnotdet
+            else
+              lp <- lp + log(Jprobs[ch[occ]]) - log(-logpnotdet) + log(1-exp(logpnotdet)) ## log(pdetect/sum(pdetect) * (1-pnotdet))
+          }
           pobs[state] <- exp(lp) #product of probs across secondaries within primary
         }
       }      
       pi <- pi * pobs #prob of ch and state
       sumpi <- sum(pi) #summed across states = prob of ch
       logL <- logL + log(sumpi) 
-      if (tp != nstates) {#for all but last primary, times transition probs
+      if (tp < nprimary) {#for all but last primary, times transition probs
         pi <- ((pi %*% G[,,tp])/sumpi)[1,] #
         } 
     }
@@ -208,9 +202,8 @@ JS_SCR <- nimbleCode({
     #Data Augmentation
     real[i] ~ dbern(omega) 
     initstate[i] ~ dcat(probstate1[1:3])
-    Jprobs[i,1:n.sec.occasions,1:(J+1)] <- JSguts$probdetect(lambda0, sigma, S[i,1:2])
-    id[i] ~ dcapt_forward$dcapt_marg(primary = primary[1:n.sec.occasions], 
-                                            real = real[i], Jprobs = Jprobs[i,1:n.sec.occasions,1:(J+1)],
+    Jprobs[i,1:J] <- JSguts$probdetected(lambda0, sigma, S[i,1:2])
+    id[i] ~ dcapt_forward$dcapt_marg(real = real[i], Jprobs = Jprobs[i,1:J],
                                             G = G[1:3,1:3,1:(n.prim.occasions-1)], init = initstate[i])
   }
   #Derived parameters
@@ -267,11 +260,9 @@ data <- list(id = 1:M,  # animal ID for indexing data.
 #only pass in things the model code needs, not setup code
 
 constants <- list(n.prim.occasions = n.prim.occasions,
-                  n.sec.occasions = n.sec.occasions,
                   alpha = rep(1, n.prim.occasions), 
                   J = nrow(traps),
                   M = M,
-                  primary = primary,
                   upperlimitx = ncol(habmat)+1,
                   upperlimity = nrow(habmat)+1
 )
@@ -283,8 +274,9 @@ inits <- list(
   beta = m$get_par("beta", m = 1, j = 1, s = 1) #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
 )
 
-JSguts <- JSguts_nf(habmat, whichmesh, distmat, trapusage, dt)
-dcapt_forward <- dcapt_forward_internal(datay)
+JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
+dcapt_forward <- dcapt_forward_internal(datay, trapusage, primary)
+
 
 rm(m) ## Remove m as it is big!
 rm(ch0)
@@ -297,18 +289,24 @@ startdefineT <- Sys.time()
 NimbleJSmodel <- nimbleModel(code = JS_SCR, 
                       constants = constants, 
                       data = data,
-                      init = inits,
-                      calculate = FALSE, #avoids calculation step, can do model$calculate later if it was too slow
-                      check = FALSE #won't check to make sure everything's right
+                      init = inits#,
+                      # calculate = FALSE#, #avoids calculation step, can do model$calculate later if it was too slow
+                      # check = FALSE #won't check to make sure everything's right
 )
 totaldefineT <- Sys.time() - startdefineT
 
+test <- compileNimble(dcapt_forward)
+test$dcapt_marg(1, 1, Jprobs = rep(0.25, nrow(traps)), G = NimbleJSmodel$G, c(0,1,0))
+dcapt_forward$dcapt_marg(x=1, real = 1, Jprobs = NimbleJSmodel$Jprobs[1,]+0.05, G = NimbleJSmodel$G, init = 2)
 
 #if you want to try to figure out errors to do with funcitons, try compiling functions by themselves
 #compiling the full model will do all of it
 #example: compileNimble(JSguts) to check that it compiles, then I can run everythign within in c++ so its faster to check
 
 cNimbleJSmodel <- compileNimble(NimbleJSmodel)
+
+cNimbleJSmodel$calculate()  ## check timing in C++
+NimbleJSmodel$G ## Why is there an NA in there. Need to debug later...
 #conf <- configureMCMC #just defines mcmc, samplers for which
 # if $setmontitors what to track
 
