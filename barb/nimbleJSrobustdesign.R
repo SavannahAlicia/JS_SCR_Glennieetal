@@ -264,6 +264,13 @@ guessinitstates <- ifelse(firstdets %in% 1:9, 2,1)
 #probability of recruiting in the first 3 primaries is about equal to
 #probability of surviving them
 
+#choose intitial S for mesh near traps
+meshrowsneartraps <- which(mesh[, "x"] %in% (traps[,"x"]+400) & #offsets
+                             mesh[, "y"] %in% (traps[,"y"]-1600)) 
+neartrap <- array(whichmesh %in% meshrowsneartraps, dim=dim(whichmesh))
+indsneartrap <- which(neartrap, arr.ind = T, useNames = T)
+Sguess <- indsneartrap[sample(1:nrow(indsneartrap), M, replace = T),]
+
 datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
                 
 data <- list(id = 1:M,  # animal ID for indexing data.
@@ -285,7 +292,7 @@ inits <- list(
   phi = m$get_par("phi", m = 1, j = 1, s = 1), 
   beta = m$get_par("beta", m = 1, j = 1, s = 1), #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
   initstate = c(guessinitstates, sample(1:3,n.fake.inds, replace = T)),
-  S = traps[sample(1:nrow(traps), M, replace =T),]
+  S = Sguess
 )
 
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
