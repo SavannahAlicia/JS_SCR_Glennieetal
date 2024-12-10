@@ -269,7 +269,7 @@ meshrowsneartraps <- which(mesh[, "x"] %in% (traps[,"x"]+400) & #offsets
                              mesh[, "y"] %in% (traps[,"y"]-1600)) 
 neartrap <- array(whichmesh %in% meshrowsneartraps, dim=dim(whichmesh))
 indsneartrap <- which(neartrap, arr.ind = T, useNames = T)
-Sguess <- indsneartrap[sample(1:nrow(indsneartrap), M, replace = T),]
+Sguess <- indsneartrap[sample(1:nrow(indsneartrap), M, replace = T),][,c(2,1)] #columns x and rows y
 
 datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
                 
@@ -314,7 +314,7 @@ model <- nimbleModel(code = JS_SCR,
                       # calculate = FALSE#, #avoids calculation step, can do model$calculate later if it was too slow
                       # check = FALSE #won't check to make sure everything's right
 )
-totaldefineT <- Sys.time() - startdefineT
+totaldefineT <- Sys.time() - startdefineT #now takes ~40 seconds
 
 model$simulate("S")
 model$simulate("initstate")
