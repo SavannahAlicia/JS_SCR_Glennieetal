@@ -258,6 +258,12 @@ M <- length(real)
 habmat <- as.matrix(habmat)
 whichmesh <- as.matrix(whichmesh)
 
+#reasonable initial states
+firstdets <- apply(apply(ch, c(1,2), sum), 1, FUN= function(x){min(which(x > 0))})
+guessinitstates <- ifelse(firstdets %in% 1:9, 2,1) 
+#probability of recruiting in the first 3 primaries is about equal to
+#probability of surviving them
+
 datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
                 
 data <- list(id = 1:M,  # animal ID for indexing data.
@@ -277,9 +283,9 @@ inits <- list(
   lambda0 = m$get_par("lambda0", m = 1, j = 1, s= 1, k = 1),
   sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1),
   phi = m$get_par("phi", m = 1, j = 1, s = 1), 
-  beta = m$get_par("beta", m = 1, j = 1, s = 1)#, #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
-  ## initstate  ## Give reasonable inits for these!
-  ## S
+  beta = m$get_par("beta", m = 1, j = 1, s = 1), #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
+  initstate = c(guessinitstates, sample(1:3,n.fake.inds, replace = T)),
+  S = traps[sample(1:nrow(traps), M, replace =T),]
 )
 
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
@@ -333,12 +339,13 @@ cmodel$calculate()  ## RUNS EVERYTHING - posterior log likelihood.
 
 # model <- nimbleModel(modelCode, data = data, inits = inits, constants = constants) #, buildDerivs = TRUE) Dont' build derivs.
 # conf <- configureMCMC(model)
+conf <- configureMCMC(cmodel)
 # conf$setMonitors(c("logalpha", "logbeta", "p0", "q", "sigma"))
-# mcmc <- buildMCMC(conf)
+mcmc <- buildMCMC(conf)
 # cmodel <- compileNimble(model)
-# cmcmc <- compileNimble(mcmc, project = model)
+cmcmc <- compileNimble(mcmc, project = cmodel)
 # # mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
-# cmcmc$run(100000) #naybe 100 just to see if its slow, can access what everything is in the model
+cmcmc$run(100) #naybe 100 just to see if its slow, can access what everything is in the model
 # mvSamples <- cmcmc$mvSamples
 # samples <- as.matrix(mvSamples)
 # out <- coda::mcmc(samples[-(1:5000),])	# Burn in
@@ -357,7 +364,7 @@ cmodel$calculate()  ## RUNS EVERYTHING - posterior log likelihood.
 # i just want point in space, random walk, i want to block sample acs per animal
 #daniel turk, devalpine, efficient block samplers for MCMC large scale bayesian estimation of scr
 
-has context menu
+#has context menu
 #data is private$data_$covs(m = 1)
 X <- m$design_mats() #setup from gams formulas
 pars <- m$par()
