@@ -24,7 +24,7 @@ JSguts_nf <- nimbleFunction(
     dhab = function(x = double(), #ones data
                      S = double(1), #array of length 2 x and y
                      log = logical(0, default = FALSE)){
-      hab <- habmat[trunc(S[1]), trunc(S[2])] #choose from mesh
+      hab <- habmat[trunc(S[2]), trunc(S[1])] #choose from mesh COLUMNS ARE X AND ROWS ARE Y
       if(log) return(log(hab))
       else return(hab)
       returnType(double())
