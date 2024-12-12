@@ -12,7 +12,6 @@ Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expm',
 JSguts_nf <- nimbleFunction(
   setup = function(habmat, whichmesh, distmat, dt){
     habmat <- as.matrix(habmat) #just in case stored as df or raster
-    habmat[is.na(habmat)] <- 0  ## PVDB: Upated to make sure NA is actually 0.
     whichmesh <- as.matrix(whichmesh)
     J <- nrow(distmat)
     dist2 <- distmat*distmat
@@ -27,7 +26,7 @@ JSguts_nf <- nimbleFunction(
       hab <- habmat[trunc(S[2]), trunc(S[1])] #choose from mesh COLUMNS ARE X AND ROWS ARE Y
       if(log) return(log(hab))
       else return(hab)
-      returnType(double())
+      returnType(double(0))
     },
     probdetected = function(lambda = double(), 
                            sigma = double(), 
@@ -200,7 +199,7 @@ JS_SCR <- nimbleCode({
   probstate1[1:3] <- c(1-b[1], b[1], 0) #create variable for first primary alive prob
   # Likelihood
   for (i in 1:M){
-    #Home range center
+    #Home range center COLUMNS ARE X AND ROWS ARE Y
     S[i, 1] ~ dunif(1, upperlimitx)    # indices on the matrix from 1 to dim + 1
     S[i, 2] ~ dunif(1, upperlimity)    # y coord of activity centers
     ones[i] ~ JSguts$dhab(S[i,1:2]) #the ones trick
@@ -252,6 +251,7 @@ dimnames(augch)[2:3] <- dimnames(ch0)[2:3]
 
 #convert mesh to raster matrix of 1 and 
 habmat <- rasterFromXYZ(cbind(mesh, rep(1, nrow(mesh)))) #change from NA to 0 and handle log0
+habmat[is.na(habmat)] <- 0  ## PVDB: Upated to make sure NA is actually 0.
 whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
 real <- c(rep(1, dim(ch0)[1]), rep(NA, n.fake.inds))
 M <- length(real)
@@ -292,7 +292,9 @@ inits <- list(
   phi = m$get_par("phi", m = 1, j = 1, s = 1), 
   beta = m$get_par("beta", m = 1, j = 1, s = 1), #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
   initstate = c(guessinitstates, sample(1:3,n.fake.inds, replace = T)),
-  S = Sguess
+  S = Sguess,
+  real = ifelse(real == 1, NA, 0),
+  omega = .6
 )
 
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
@@ -314,9 +316,9 @@ model <- nimbleModel(code = JS_SCR,
                       # calculate = FALSE#, #avoids calculation step, can do model$calculate later if it was too slow
                       # check = FALSE #won't check to make sure everything's right
 )
-totaldefineT <- Sys.time() - startdefineT #now takes ~40 seconds
+totaldefineT <- Sys.time() - startdefineT #now takes ~1 min
 
-model$simulate("S")
+model$simulate("real")
 model$simulate("initstate")
 model$calculate("Jprobs")
 model$calculate("id[1]")  ## check timing in C++
