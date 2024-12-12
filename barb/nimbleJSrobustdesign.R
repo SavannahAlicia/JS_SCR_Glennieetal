@@ -3,6 +3,8 @@ library(secr)
 library(raster)
 library(expm)
 
+##Define Functions#-------------------------------------------------------------
+
 ## Nimble function that calls R matrix eponential from expm package. My base R didnt' have another expm function...
 Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expm',
                      returnType = double(2))
@@ -153,24 +155,7 @@ dcapt_forward_internal <- nimbleFunction(
   )
 )
 
-#Testing:
-# x = double(1), # Observed capture history for one animal
-           # primary = double(1), # vector of primary indices for each secondary
-           # real = double(),     # real or not real animal?
-           # Jprobs = double(2), # probability of detection for each secondary at each trap
-           # G = double(2), # Transition prob matrix
-           # init = double(0)
-# Jprobs <- do.call('rbind', lapply(1:9, FUN = function(x){rdirch(1, rep(1,4))}))
-# G <- array(rbind(c(0.3, 0.7, 0), c(0, 0.99, 0.01), c(0, 0, 1)), c(3, 3, 2))
-# 
-# # debugonce(dcapt_forward)
-# dcapt_forward(x=c(4,4,4,1,1,4,4,4,4), primary = c(1,1,1,2,2,3,3,3,3), 
-#   real = 1, Jprobs, G, init = 1, log = FALSE)
-# Jprobs[,1]*0.99^2
-# prod(Jprobs[1:5,1])*0.99*(0.99*prod(Jprobs[6:9,4]) + 0.01)
-# 1*0.7*prod(Jprobs[4:5,1])*(0.99*prod(Jprobs[6:9,4]) + 0.01)
 
-#spatial
 JS_SCR <- nimbleCode({
   
   # Priors and constraints
@@ -221,8 +206,14 @@ JS_SCR <- nimbleCode({
   #Nsuper <- sum(real[1:M])
 })
 
+##Data Setup#-------------------------------------------------------------------
+#still need to incorporate xy smooth, time smooth beta and phi, and spatial strata
+# par_sal <- list(lambda0 ~ trapstratum + trapopen + periodf, #design matrix has row for each trap on each occasion
+#                 sigma ~ trapstratum + trapopen + periodf, #same as lambda0
+#                 beta ~ s(realtime, k = 6), 
+#                 phi ~ s(realtime, k = 3), 
+#                 D ~ s(x, y, k = 20) + s(salinity, k = 5))
 
-#data prep
 m <- readRDS("m_sal5.Rds") #put it in repo
 n.fake.inds <- 1000
 ch <- m$data()$capthist()
@@ -300,7 +291,7 @@ inits <- list(
 JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
 dcapt_forward <- dcapt_forward_internal(datay, trapusage, primary)
 
-
+##Memory Cleanup#---------------------------------------------------------------
 rm(m) ## Remove m as it is big!
 rm(ch0)
 rm(augch)
@@ -308,6 +299,7 @@ rm(ch)
 rm(aug)
 gc()
 
+##Nimble Object Creation#-------------------------------------------------------
 startdefineT <- Sys.time()
 model <- nimbleModel(code = JS_SCR, 
                       constants = constants, 
@@ -318,43 +310,21 @@ model <- nimbleModel(code = JS_SCR,
 )
 totaldefineT <- Sys.time() - startdefineT #now takes ~1 min
 
-model$simulate("real")
-model$simulate("initstate")
-model$calculate("Jprobs")
-model$calculate("id[1]")  ## check timing in C++
-model$Jprobs
-model$simulate("initstate")
-J <- nrow(traps)
-dcapt_forward$dcapt_marg(x = 1, real = 1, Jprobs = model$Jprobs[1,],
-                                            G = model$G[1:3,1:3,1:10], init = model$initstate[1])
-
-# test <- compileNimble(dcapt_forward)
-# test$dcapt_marg(1, 1, Jprobs = rep(0.25, nrow(traps)), G = NimbleJSmodel$G, c(0,1,0))
-# dcapt_forward$dcapt_marg(x=1, real = 1, Jprobs = NimbleJSmodel$Jprobs[1,]+0.05, G = NimbleJSmodel$G, init = 2)
-
-#if you want to try to figure out errors to do with funcitons, try compiling functions by themselves
-#compiling the full model will do all of it
-#example: compileNimble(JSguts) to check that it compiles, then I can run everythign within in c++ so its faster to check
-
+startcompileT <- Sys.time()
 cmodel <- compileNimble(model)
+totalcompileT <- difftime(startcompileT, Sys.time(), "secs")
 
-cmodel$calculate("G")  ## check timing in C++
-cmodel$calculate("Jprobs")  ## check timing in C++
-cmodel$calculate("id[1]")  ## check timing in C++
-cmodel$calculate()  ## RUNS EVERYTHING - posterior log likelihood.
+startcalcT <- Sys.time()
+cmodel$calculate()
+totalcalcT <- difftime(startcalcT, Sys.time(), "secs")
 
-#conf <- configureMCMC #just defines mcmc, samplers for which
-# if $setmontitors what to track
-
-# model <- nimbleModel(modelCode, data = data, inits = inits, constants = constants) #, buildDerivs = TRUE) Dont' build derivs.
-# conf <- configureMCMC(model)
 conf <- configureMCMC(cmodel)
-# conf$setMonitors(c("logalpha", "logbeta", "p0", "q", "sigma"))
+conf$setMonitors(c("beta", "phi", "lambda0", "sigma", "S"))
 mcmc <- buildMCMC(conf)
-# cmodel <- compileNimble(model)
 cmcmc <- compileNimble(mcmc, project = cmodel)
-# # mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
 cmcmc$run(100) #naybe 100 just to see if its slow, can access what everything is in the model
+
+# # mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
 # mvSamples <- cmcmc$mvSamples
 # samples <- as.matrix(mvSamples)
 # out <- coda::mcmc(samples[-(1:5000),])	# Burn in
@@ -383,9 +353,4 @@ for(i in 1:length(pars)){
 #jagam will produce smooth code (mgcv function) and will need penalty too (penalty matrix will have prior)
 #Marra 2011 paper
 
-#still need to incorporate xy smooth, time smooth beta and phi, and spatial strata
-# par_sal <- list(lambda0 ~ trapstratum + trapopen + periodf, #design matrix has row for each trap on each occasion
-#                 sigma ~ trapstratum + trapopen + periodf, #same as lambda0
-#                 beta ~ s(realtime, k = 6), 
-#                 phi ~ s(realtime, k = 3), 
-#                 D ~ s(x, y, k = 20) + s(salinity, k = 5))
+
