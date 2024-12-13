@@ -81,76 +81,77 @@ dcapt_forward_internal <- nimbleFunction(
     dcapt_marg = function(x = double(), # index of animal 1:M
            real = double(),     # real or not real animal?
            Jprobs = double(1), # probability of detection for each secondary at each trap (single individual)
-           G = double(3), # Transition prob matrix
+           G = double(3), # Transition prob matrix for each primary
            init = double(0),
            log = logical(0, default=TRUE)){
-    ch <- capthist[x,]       
+    ch <- capthist[x,]    #vector of which trap (or no trap) made first detection for occasion    
     ## Check if it's not real then prob = 1, unless it was observed, then shit.
     isobs0 <- all(ch == J+1) #all unobserved
     if(real == 0){ # if augmented individual
-      ans <- 1 # it must be unobserved
+      ans <- log(1) # it must be unobserved
       if(!isobs0){ # if it was observed
-        ans <- 0 # that's not possible
+        ans <- log(0) # that's not possible
       }
-      if(log) return(log(ans))
-      else return(ans)
-    }
-    
-    ## Now to forward solve.
-    ## State 1: unborn
-    ## State 2: alive
-    ## State 3: dead
-    nstates <- dim(G)[1]
-    pi <- nimNumeric(value = 0, length = nstates) # prob of state as we go forward
-    pobs <- nimNumeric(value = 0, length = nstates) # Pdetect given state
-    logL <- 0
-    pi[init] <- 1 #init specifies number of state we begin in
-        
-    for( tp in 1:(nprimary) ){
-      idx <- which(primary == tp) #secondaries in primary
-      isobs <- any(ch[idx] != (J+1))
-      ## Find probability of obs within the primary.
-      for( state in 1:nstates ){
-        if(state == 1 | state == 3){ #if unborn or dead
-          if(isobs) {
-            pobs[state] <- 0 #prob 0 of being observed
-         } else {
-            pobs[state] <- 1 #prob 1 of being unobserved
-         }
-        } else {
-          lp <- 0
-          for( j in seq_along(idx) ) {
-            occ <- idx[j]
-            ## Need to compute detection probs:
-            ## Part 1: Not detected but keep on log scale
-            keep <- which(trapusage[,occ] > 0)  ## Save a little compute time maybe...
-            logpnotdet <- -sum(trapusage[keep,occ]*Jprobs[keep])
-            ## If not detected then I'm done. Otherwise calc the prob of being det at just that trap.
-            if(ch[occ] == J+1) {
-              lp <- lp + logpnotdet
-            }else{
-              ## If can't be detected, but was then return -infinity.
-              if(logpnotdet < 0) {
-                lp <- lp + log(Jprobs[ch[occ]]) - log(-logpnotdet) + log(1-exp(logpnotdet)) ## log(pdetect/sum(pdetect) * (1-pnotdet))
+    } else { #otherwise its a real individual, in which case detection history depends on state
+      ## Now to forward solve.
+      ## State 1: unborn
+      ## State 2: alive
+      ## State 3: dead
+      nstates <- dim(G)[1]
+      pi <- nimNumeric(value = 0, length = nstates) # prob of state as we go forward
+      pobs <- nimNumeric(value = 0, length = nstates) # Pdetect given state
+      logL <- 0
+      pi[init] <- 1 #init specifies number of state we begin in
+      
+      for( tp in 1:(nprimary) ){
+        idx <- which(primary == tp) #secondaries in primary
+        isobs <- any(ch[idx] != (J+1))
+        ## Find probability of obs within the primary.
+        for( state in 1:nstates ){
+          if(state == 1 | state == 3){ #if unborn or dead
+            if(isobs) {
+              pobs[state] <- 0 #prob 0 of being observed
+            } else {
+              pobs[state] <- 1 #prob 1 of being unobserved
+            }
+          } else { #if alive
+            lp <- 0
+            for( k in seq_along(idx) ) {
+              occ <- idx[k]
+              ## Need to compute detection probs:
+              ## Part 1: Not detected but keep on log scale
+              keep <- which(trapusage[,occ] > 0)  ## Save a little compute time maybe...
+              logpnotdet <- -sum(trapusage[keep,occ]*Jprobs[keep])
+              ## If not detected then I'm done. Otherwise calc the prob of being det at just that trap.
+              if(ch[occ] == J+1) {
+                lp <- lp + logpnotdet
               }else{
-                lp <- -Inf
+                ## If can't be detected, but was then return -infinity.
+                if(logpnotdet < 0) { #probability of no detection < 1
+                  lp <- lp + log(Jprobs[ch[occ]]) - log(-logpnotdet) + log(1-exp(logpnotdet)) ## log(pdetect/sum(pdetect) * (1-pnotdet))
+                }else{
+                  lp <- -Inf
+                }
               }
             }
+            pobs[state] <- exp(lp) #product of probs across secondaries within primary
           }
-          pobs[state] <- exp(lp) #product of probs across secondaries within primary
+        }
+        pi <- pi * pobs #prob of ch and state
+        sumpi <- sum(pi) #summed across states = prob of ch
+        logL <- logL + log(sumpi) 
+        if (tp < nprimary) { #for all but last primary, times transition probs
+          if (sumpi != 0){ #will return NA for divide by 0, if all pi 0 just keep 0
+          pi <- ((pi %*% G[,,tp])/sumpi)[1,] 
+          }
         }
       }
-      pi <- pi * pobs #prob of ch and state
-      sumpi <- sum(pi) #summed across states = prob of ch
-      logL <- logL + log(sumpi) 
-      if (tp < nprimary) { #for all but last primary, times transition probs
-        pi <- ((pi %*% G[,,tp])/sumpi)[1,] #
-      }
+      ans <- logL
     }
-    ans <- sum(pi)
+    
     returnType(double())
-    if(log) return(logL)
-    else return(exp(logL))
+    if(log) return(ans)
+    else return(exp(ans))
   }
   )
 )
@@ -266,7 +267,9 @@ datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
                 
 data <- list(id = 1:M,  # animal ID for indexing data.
              real = real,
-             ones = rep(1, M))
+             ones = rep(1, M),
+             initstate = ifelse(datay[,1] != 910, 1, NA)#put alive for those detected in first primary
+             )
 #only pass in things the model code needs, not setup code
 
 constants <- list(n.prim.occasions = n.prim.occasions,
@@ -322,7 +325,10 @@ conf <- configureMCMC(cmodel)
 conf$setMonitors(c("beta", "phi", "lambda0", "sigma", "S"))
 mcmc <- buildMCMC(conf)
 cmcmc <- compileNimble(mcmc, project = cmodel)
+
+start100mcmcT <- Sys.time()
 cmcmc$run(100) #naybe 100 just to see if its slow, can access what everything is in the model
+total100mcmcT <- difftime(Sys.time(), start100mcmcT, "secs")
 
 # # mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
 # mvSamples <- cmcmc$mvSamples
