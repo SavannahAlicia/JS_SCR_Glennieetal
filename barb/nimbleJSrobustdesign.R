@@ -247,6 +247,7 @@ habmat[is.na(habmat)] <- 0  ## PVDB: Upated to make sure NA is actually 0.
 whichmesh <- rasterFromXYZ(cbind(mesh, 1:nrow(mesh)))
 real <- c(rep(1, dim(ch0)[1]), rep(NA, n.fake.inds))
 M <- length(real)
+n.real.inds <- M - n.fake.inds
 habmat <- as.matrix(habmat)
 whichmesh <- as.matrix(whichmesh)
 
@@ -257,18 +258,27 @@ guessinitstates <- ifelse(firstdets %in% 1:9, 2,1)
 #probability of surviving them
 
 #choose intitial S for mesh near traps
-meshrowsneartraps <- which(mesh[, "x"] %in% (traps[,"x"]+400) & #offsets
-                             mesh[, "y"] %in% (traps[,"y"]-1600)) 
-neartrap <- array(whichmesh %in% meshrowsneartraps, dim=dim(whichmesh))
-indsneartrap <- which(neartrap, arr.ind = T, useNames = T)
-Sguess <- indsneartrap[sample(1:nrow(indsneartrap), M, replace = T),][,c(2,1)] #columns x and rows y
+meshclosetrap <- function(#returns col x and row y of mesh closest to trap
+    trapn){ #index of trap
+  closestx <- which(abs(mesh[,"x"] - traps[trapn,"x"]) == 
+                      min(abs(mesh[,"x"] - traps[trapn,"x"])))
+  closesty <- which(abs(mesh[closestx,"y"] - traps[trapn,"y"]) == 
+                      min(abs(mesh[closestx,"y"] - traps[trapn,"y"])))
+  meshrowneartrap <- closestx[closesty]
+  return(which(whichmesh == meshrowneartrap, arr.ind = T, useNames = T)[,c(2,1)] #columns x and rows y
+         )
+}
 
 datay <-  apply(augch, c(1,2), FUN = function(x){which(x > 0)})
+Sguess <- rbind(#real individuals
+  do.call(rbind, lapply(as.list(apply(datay[1:n.real.inds,], 1, min)),  meshclosetrap)),
+  do.call(rbind, lapply(as.list(sample(1:nrow(traps), n.fake.inds, replace = T)),  meshclosetrap))
+)
                 
 data <- list(id = 1:M,  # animal ID for indexing data.
              real = real,
              ones = rep(1, M),
-             initstate = ifelse(datay[,1] != 910, 1, NA)#put alive for those detected in first primary
+             initstate = ifelse(apply(as.array(datay[,which(primary ==1)]), 1, min) != 910, 2, NA)#put alive for those detected in first primary
              )
 #only pass in things the model code needs, not setup code
 
@@ -327,12 +337,19 @@ mcmc <- buildMCMC(conf)
 cmcmc <- compileNimble(mcmc, project = cmodel)
 
 start100mcmcT <- Sys.time()
-cmcmc$run(100) #naybe 100 just to see if its slow, can access what everything is in the model
+cmcmc$run(100, time = T) #took 40 mins, which is 0.4 min per iter
 total100mcmcT <- difftime(Sys.time(), start100mcmcT, "secs")
 
-# # mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
-# mvSamples <- cmcmc$mvSamples
-# samples <- as.matrix(mvSamples)
+mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
+
+mvSamples <- cmcmc$mvSamples
+samples <- as.matrix(mvSamples)
+S1sample <- samples[,1:M]
+S2sample <- samples[,(M+1):(M+M)]
+betasample <- samples[,which(grepl("beta", colnames(samples)))]
+phisample <- samples[,which(grepl("phi", colnames(samples)))]
+lambda0sample <- samples[,which(grepl("lambda0", colnames(samples)))]
+sigmasample <- samples[,which(grepl("sigma", colnames(samples)))]
 # out <- coda::mcmc(samples[-(1:5000),])	# Burn in
 # mcmc.sum <- do.call("cbind", summary(out))
 
