@@ -361,6 +361,7 @@ betasample <- samples[,which(grepl("beta", colnames(samples)))]
 phisample <- samples[,which(grepl("phi", colnames(samples)))]
 lambda0sample <- samples[,which(grepl("lambda0", colnames(samples)))]
 sigmasample <- samples[,which(grepl("sigma", colnames(samples)))]
+omegasample <- samples[,which(grepl("omega", colnames(samples)))]
 # out <- coda::mcmc(samples[-(1:5000),])	# Burn in
 # mcmc.sum <- do.call("cbind", summary(out))
 
