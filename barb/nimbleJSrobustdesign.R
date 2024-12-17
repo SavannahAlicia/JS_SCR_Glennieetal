@@ -180,7 +180,8 @@ JS_SCR <- nimbleCode({
   } #t
   
   # Convert rates to probabilities
-  G[1:3,1:3,1:(n.prim.occasions-1)] <- JSguts$transprobs(phi[1:(n.prim.occasions-1)], b[1:n.prim.occasions])  ## pvdb Index issue with b. Added 1.
+  G[1:3,1:3,1:(n.prim.occasions-1)] <- JSguts$transprobs(phi[1:(n.prim.occasions-1)], 
+                                                         b[1:n.prim.occasions])  ## pvdb Index issue with b. Added 1.
   
   probstate1[1:3] <- c(1-b[1], b[1], 0) #create variable for first primary alive prob
   # Likelihood
@@ -218,14 +219,23 @@ JS_SCR <- nimbleCode({
 m <- readRDS("m_sal5.Rds") #put it in repo
 n.fake.inds <- 1000
 ch <- m$data()$capthist()
-traps <- m$data()$traps()
+#rescale to km
 distmat <- m$data()$distances()
+distmat <- distmat/1000
 mesh <- m$data()$mesh()
+yoff <- min(mesh$y)
+xoff <- min(mesh$x)
+mesh <- data.frame(x = (mesh$x-xoff)/1000, 
+                     y = (mesh$y-yoff)/1000)
+traps <- m$data()$traps()
+traps <- data.frame(x = (traps$x-xoff)/1000,
+                      y = (traps$y-yoff)/1000)
 primary <- m$data()$primary()
 n.prim.occasions <- length(unique(primary))
 dt <- diff(m$data()$time())
 n.sec.occasions <- sum(primary %in% 1:n.prim.occasions)
 trapusage <- usage(traps)
+
 
 #create capture history that has a row for no detections per occasion
 ch0 <- array(data = NA, dim = c(dim(ch)[1:2], dim(ch)[3]+1))
@@ -292,7 +302,7 @@ constants <- list(n.prim.occasions = n.prim.occasions,
 
 inits <- list(
   lambda0 = m$get_par("lambda0", m = 1, j = 1, s= 1, k = 1),
-  sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1),
+  sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1)/1000,
   phi = m$get_par("phi", m = 1, j = 1, s = 1), 
   beta = m$get_par("beta", m = 1, j = 1, s = 1), #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
   initstate = c(guessinitstates, sample(1:3,n.fake.inds, replace = T)),
@@ -325,19 +335,19 @@ totaldefineT <- Sys.time() - startdefineT #now takes ~1 min
 
 startcompileT <- Sys.time()
 cmodel <- compileNimble(model)
-totalcompileT <- difftime(startcompileT, Sys.time(), "secs")
+totalcompileT <- difftime(startcompileT, Sys.time(), "secs") #30 sec
 
 startcalcT <- Sys.time()
 cmodel$calculate()
 totalcalcT <- difftime(startcalcT, Sys.time(), "secs")
 
 conf <- configureMCMC(cmodel)
-conf$setMonitors(c("beta", "phi", "lambda0", "sigma", "S"))
+conf$setMonitors(c("beta", "phi", "lambda0", "sigma", "S", "omega"))
 mcmc <- buildMCMC(conf)
 cmcmc <- compileNimble(mcmc, project = cmodel)
 
 start100mcmcT <- Sys.time()
-cmcmc$run(100, time = T) #took 40 mins, which is 0.4 min per iter
+cmcmc$run(10, time = T) #took 40 mins, which is 0.4 min per iter
 total100mcmcT <- difftime(Sys.time(), start100mcmcT, "secs")
 
 mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
