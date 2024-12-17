@@ -228,13 +228,14 @@ xoff <- min(mesh$x)
 mesh <- data.frame(x = (mesh$x-xoff)/1000, 
                      y = (mesh$y-yoff)/1000)
 traps <- m$data()$traps()
+trapusage <- usage(traps)
 traps <- data.frame(x = (traps$x-xoff)/1000,
                       y = (traps$y-yoff)/1000)
 primary <- m$data()$primary()
 n.prim.occasions <- length(unique(primary))
 dt <- diff(m$data()$time())
 n.sec.occasions <- sum(primary %in% 1:n.prim.occasions)
-trapusage <- usage(traps)
+
 
 
 #create capture history that has a row for no detections per occasion
