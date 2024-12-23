@@ -2,6 +2,7 @@ library(nimble)
 library(secr)
 library(raster)
 library(expm)
+library(ggplot2)
 
 ##Define Functions#-------------------------------------------------------------
 
@@ -348,20 +349,40 @@ mcmc <- buildMCMC(conf)
 cmcmc <- compileNimble(mcmc, project = cmodel)
 
 start100mcmcT <- Sys.time()
-cmcmc$run(10, time = T) #took 40 mins, which is 0.4 min per iter
+cmcmc$run(100, time = T) #took 15 mins, which is 0.155 min per iter, 5 days for 50k
 total100mcmcT <- difftime(Sys.time(), start100mcmcT, "secs")
 
-mcmc.out <- runMCMC(cmcmc, niter=50000, nburnin=5000, nchains=3, samplesAsCodaMCMC = TRUE)
+mcmc.out <- runMCMC(cmcmc, niter= 2000, nburnin=200, nchains=3, samplesAsCodaMCMC = TRUE)
 
-mvSamples <- cmcmc$mvSamples
+mvSamples <- mcmc.out$chain1#cmcmc$mvSamples
 samples <- as.matrix(mvSamples)
-S1sample <- samples[,1:M]
+plotsampletrace <- function(par = "", numits, limits = c(0,max(samplematrix))){
+  samplematrix <- samples[,which(grepl(par, colnames(samples)))]
+  if(!is.null(dim(samplematrix))){
+    sampledf <- data.frame(name = tidyr::pivot_longer(as.data.frame(samplematrix), cols = 1:ncol(samplematrix))$name,
+                           value = tidyr::pivot_longer(as.data.frame(samplematrix), cols = 1:ncol(samplematrix))$value,
+                           iteration = rep(1:numits, each = ncol(samplematrix)))
+    
+  } else {
+    sampledf <- data.frame(name = rep(par),
+                           value = samplematrix,
+                           iteration = 1:numits)
+  }
+  theplot <- ggplot(data = sampledf) +
+    geom_line(mapping = aes(x = iteration, y = value, col = name), alpha = .5) +
+    ylim(limits) +
+    theme_classic()
+  print(theplot)
+  return(theplot)
+}
+plotsampletrace("S\\[\\d{1,4}\\,\\s1.", 1800)
 S2sample <- samples[,(M+1):(M+M)]
-betasample <- samples[,which(grepl("beta", colnames(samples)))]
-phisample <- samples[,which(grepl("phi", colnames(samples)))]
-lambda0sample <- samples[,which(grepl("lambda0", colnames(samples)))]
-sigmasample <- samples[,which(grepl("sigma", colnames(samples)))]
-omegasample <- samples[,which(grepl("omega", colnames(samples)))]
+plotsampletrace("S.*, 1]", 1800)
+plotsampletrace("beta", 1800)
+plotsampletrace("phi", 1800, limits = c(.6,1))
+plotsampletrace("lambda0",1800)
+plotsampletrace("sigma",1800)
+plotsampletrace("omega", 1800, limits = c(.97,1))
 # out <- coda::mcmc(samples[-(1:5000),])	# Burn in
 # mcmc.sum <- do.call("cbind", summary(out))
 
