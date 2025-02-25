@@ -354,32 +354,32 @@ total100mcmcT <- difftime(Sys.time(), start100mcmcT, "secs")
 
 start10kmcmcT <- Sys.time()
 mcmc.out <- runMCMC(cmcmc, niter= 30000, nburnin=10000, nchains=2, samplesAsCodaMCMC = TRUE)
-total10kmcmcT <- difftime(Sys.time(), start10kmcmcT)
+total10kmcmcT <- difftime(Sys.time(), start10kmcmcT) #Time difference of 4.922812 days
 
 saveRDS(mcmc.out, file = "mcmcout.Rds")
 saveRDS(total10kmcmcT, file = "time.Rds")
-# 
-# mvSamples <- mcmc.out$chain1#cmcmc$mvSamples
-# samples <- as.matrix(mvSamples)
-# plotsampletrace <- function(par = "", numits, limits = c(0,max(samplematrix))){
-#   samplematrix <- samples[,which(grepl(par, colnames(samples)))]
-#   if(!is.null(dim(samplematrix))){
-#     sampledf <- data.frame(name = tidyr::pivot_longer(as.data.frame(samplematrix), cols = 1:ncol(samplematrix))$name,
-#                            value = tidyr::pivot_longer(as.data.frame(samplematrix), cols = 1:ncol(samplematrix))$value,
-#                            iteration = rep(1:numits, each = ncol(samplematrix)))
-#     
-#   } else {
-#     sampledf <- data.frame(name = rep(par),
-#                            value = samplematrix,
-#                            iteration = 1:numits)
-#   }
-#   theplot <- ggplot(data = sampledf) +
-#     geom_line(mapping = aes(x = iteration, y = value, col = name), alpha = .5) +
-#     ylim(limits) +
-#     theme_classic()
-#   print(theplot)
-#   return(theplot)
-# }
+
+mvSamples <- mcmc.out$chain1#cmcmc$mvSamples
+samples <- as.matrix(mvSamples)
+plotsampletrace <- function(par = "", numits, limits = c(0,max(samplematrix))){
+  samplematrix <- samples[,which(grepl(par, colnames(samples)))] #regular expressions to pull parameters for plots
+  if(!is.null(dim(samplematrix))){
+    sampledf <- data.frame(name = tidyr::pivot_longer(as.data.frame(samplematrix), cols = 1:ncol(samplematrix))$name,
+                           value = tidyr::pivot_longer(as.data.frame(samplematrix), cols = 1:ncol(samplematrix))$value,
+                           iteration = rep(1:numits, each = ncol(samplematrix)))
+
+  } else {
+    sampledf <- data.frame(name = rep(par),
+                           value = samplematrix,
+                           iteration = 1:numits)
+  }
+  theplot <- ggplot(data = sampledf) +
+    geom_line(mapping = aes(x = iteration, y = value, col = name), alpha = .5) +
+    ylim(limits) +
+    theme_classic()
+  print(theplot)
+  return(theplot)
+}
 # plotsampletrace("S\\[\\d{1,4}\\,\\s1.", 1800)
 # S2sample <- samples[,(M+1):(M+M)]
 # plotsampletrace("S.*, 1]", 1800)
@@ -390,28 +390,4 @@ saveRDS(total10kmcmcT, file = "time.Rds")
 # plotsampletrace("omega", 1800, limits = c(.97,1))
 # # out <- coda::mcmc(samples[-(1:5000),])	# Burn in
 # # mcmc.sum <- do.call("cbind", summary(out))
-# 
-# # conf$removeSamplers('X')
-# # for(i in 1:M){
-# #   conf$addSampler(target = paste0('X[', i, ', 1:2]'), 
-# #                   type = 'RW_block', silent = TRUE))
-# # }
-# # 
-# # conf$removeSamplers('sigma')
-# # conf$addSampler(target = 'sigma', 
-# #                 type = 'slice', silent = TRUE, control = list(adaptive = TRUE, scaleWidth = 0.5))	
-# # 
-# # i just want point in space, random walk, i want to block sample acs per animal
-# #daniel turk, devalpine, efficient block samplers for MCMC large scale bayesian estimation of scr
-# 
-# #has context menu
-# #data is private$data_$covs(m = 1)
-# X <- m$design_mats() #setup from gams formulas
-# pars <- m$par()
-# for(i in 1:length(pars)){
-#   pars[[i]] 
-# }
-# #jagam will produce smooth code (mgcv function) and will need penalty too (penalty matrix will have prior)
-# #Marra 2011 paper
-# 
 # 
