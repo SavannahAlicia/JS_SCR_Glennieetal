@@ -13,13 +13,14 @@ Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expm',
 ## Main methods function in Nimble that contains all the data to reduce the complexity of the model structure in NIMBLE
 ## Key is that we are going to put some cleverish caching in here so that we don't have to create too many jprobs in code.
 JSguts_nf <- nimbleFunction(
-  setup = function(habmat, whichmesh, distmat, dt){
+  setup = function(habmat, whichmesh, distmat, dt, dLimit = 100){
     habmat <- as.matrix(habmat) #just in case stored as df or raster
     whichmesh <- as.matrix(whichmesh)
     J <- nrow(distmat)
     dist2 <- distmat*distmat
     n.sec.occasions <- ncol(trapusage)
     n.prim.occasions <- length(dt) + 1
+    d2Limit <- dLimit^2
   },
   # run = function(){},
   methods = list(
@@ -37,8 +38,8 @@ JSguts_nf <- nimbleFunction(
       smesh <- whichmesh[trunc(S[2]), trunc(S[1])]  #index of mesh COLUMNS ARE X AND ROWS ARE Y!!!!! *PVDB
       jprobs <- numeric(value = 0, length = J)
       if(is.na(smesh)) return(jprobs) ## PVDB: Made it more robust. Just in case distance isn't calcualted make Jprobs 0.
-      
-      jprobs <- lambda*exp(-dist2[1:J, smesh]/(2*sigma^2))  ## This could be more efficient. It's where bischoff only computes on nearby traps...
+      keep <- which(dist2[1:J, smesh] <= d2Limit)
+      jprobs[keep] <- lambda*exp(-dist2[keep, smesh]/(2*sigma^2))  ## This could be more efficient. It's where bischoff only computes on nearby traps...
       returnType(double(1))
       return(jprobs)
     },
@@ -52,8 +53,8 @@ JSguts_nf <- nimbleFunction(
       return(G)
     },
     calcGt = function(phi = double(1), 
-                     b = double(1),
-                     tp = double()){
+                      b = double(1),
+                      tp = double()){
       # State membership transition probability 
         #Q is rates
       Q <- matrix(0, 3, 3)
@@ -103,7 +104,8 @@ dcapt_forward_internal <- nimbleFunction(
       pobs <- nimNumeric(value = 0, length = nstates) # Pdetect given state
       logL <- 0
       pi[init] <- 1 #init specifies number of state we begin in
-      
+      keep <- which(Jprobs > 0)  ## Save a little compute time maybe...
+
       for( tp in 1:(nprimary) ){
         idx <- which(primary == tp) #secondaries in primary
         isobs <- any(ch[idx] != (J+1))
@@ -121,7 +123,6 @@ dcapt_forward_internal <- nimbleFunction(
               occ <- idx[k]
               ## Need to compute detection probs:
               ## Part 1: Not detected but keep on log scale
-              keep <- which(trapusage[,occ] > 0)  ## Save a little compute time maybe...
               logpnotdet <- -sum(trapusage[keep,occ]*Jprobs[keep])
               ## If not detected then I'm done. Otherwise calc the prob of being det at just that trap.
               if(ch[occ] == J+1) {
@@ -302,19 +303,22 @@ constants <- list(n.prim.occasions = n.prim.occasions,
                   upperlimity = nrow(habmat)+1
 )
 
+realinit <- (!is.na(data$real))*1
+realinit[realinit == 1] <- NA
 inits <- list(
   lambda0 = m$get_par("lambda0", m = 1, j = 1, s= 1, k = 1),
   sigma = m$get_par("sigma", m = 1, j = 1, s= 1, k = 1)/1000,
   phi = m$get_par("phi", m = 1, j = 1, s = 1), 
   beta = m$get_par("beta", m = 1, j = 1, s = 1), #rdirch(n.prim.occasions, 1), #rdirch for more than one n doesn't work
-  initstate = c(guessinitstates, sample(1:3,n.fake.inds, replace = T)),
+  initstate = c(guessinitstates, sample(1:2, n.fake.inds, replace = T)), ## InitState can't be 3 Savannah!!
   S = Sguess,
-  real = ifelse(real == 1, NA, 0),
+  real = realinit,
   omega = .6
 )
 
-JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt)
+JSguts <- JSguts_nf(habmat, whichmesh, distmat, dt, dLimit = 30)
 dcapt_forward <- dcapt_forward_internal(datay, trapusage, primary)
+
 
 ##Memory Cleanup#---------------------------------------------------------------
 rm(m) ## Remove m as it is big!
@@ -349,8 +353,10 @@ mcmc <- buildMCMC(conf)
 cmcmc <- compileNimble(mcmc, project = cmodel)
 
 start100mcmcT <- Sys.time()
-cmcmc$run(100, time = T) #took 15 mins, which is 0.155 min per iter, 5 days for 50k
+cmcmc$run(10000, time = TRUE) #took 15 mins, which is 0.155 min per iter, 5 days for 50k
 total100mcmcT <- difftime(Sys.time(), start100mcmcT, "secs")
+
+# sum(cmcmc$getTimes())/100*50000/60/60 ## cmcmc$getTimes() returns the sample time for each sampler.
 
 start10kmcmcT <- Sys.time()
 mcmc.out <- runMCMC(cmcmc, niter= 30000, nburnin=10000, nchains=2, samplesAsCodaMCMC = TRUE)
