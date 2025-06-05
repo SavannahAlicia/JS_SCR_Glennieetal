@@ -6,12 +6,17 @@ library(ggplot2)
 
 ##Define Functions#-------------------------------------------------------------
 
-## Nimble function that calls R matrix eponential from expm package. My base R didnt' have another expm function...
+## Nimble function that calls R matrix eponential from expm package.
+## Will do this call in compiled code.
 Rexpm <- nimbleRcall(function(x = double(2)){}, Rfun = 'expm',
                      returnType = double(2))
 
 ## Main methods function in Nimble that contains all the data to reduce the complexity of the model structure in NIMBLE
 ## Key is that we are going to put some cleverish caching in here so that we don't have to create too many jprobs in code.
+## Setup includes a matrix of if habitat or not. 
+## distmat is distances between each centroid on the mask and all detectors (Distance can be euclidean or non-euclidean).
+## dt is the time between each primary occassion.
+## dLimit is the maximum distance that an animal could travel from its activity centre. After that pdetect = 0.
 JSguts_nf <- nimbleFunction(
   setup = function(habmat, whichmesh, distmat, dt, dLimit = 100){
     habmat <- as.matrix(habmat) #just in case stored as df or raster
@@ -32,17 +37,20 @@ JSguts_nf <- nimbleFunction(
       else return(hab)
       returnType(double(0))
     },
+    ## Method to calculate the probability of being detected based on a halfnormal detection function at each detector given activity centre.
+    ## returns vector of length traps.
     probdetected = function(lambda = double(), 
                            sigma = double(), 
                            S = double(1)){
       smesh <- whichmesh[trunc(S[2]), trunc(S[1])]  #index of mesh COLUMNS ARE X AND ROWS ARE Y!!!!! *PVDB
       jprobs <- numeric(value = 0, length = J)
-      if(is.na(smesh)) return(jprobs) ## PVDB: Made it more robust. Just in case distance isn't calcualted make Jprobs 0.
+      if(is.na(smesh)) return(jprobs)
       keep <- which(dist2[1:J, smesh] <= d2Limit)
-      jprobs[keep] <- lambda*exp(-dist2[keep, smesh]/(2*sigma^2))  ## This could be more efficient. It's where bischoff only computes on nearby traps...
+      jprobs[keep] <- lambda*exp(-dist2[keep, smesh]/(2*sigma^2))
       returnType(double(1))
       return(jprobs)
     },
+    ## Returns transition probabilty matrix.
     transprobs = function(phi = double(1), 
                           b = double(1)){ #note could vectorize to speed up
       G <- array(NA, dim = c(3,3,(n.prim.occasions - 1)))
@@ -52,6 +60,7 @@ JSguts_nf <- nimbleFunction(
       returnType(double(3))
       return(G)
     },
+    ## internal method for computing the transition matrix.
     calcGt = function(phi = double(1), 
                       b = double(1),
                       tp = double()){
@@ -72,6 +81,11 @@ JSguts_nf <- nimbleFunction(
   )
 )
 
+## distribution function for marginalizing over all detections of a single animal.
+## holds all the data for memory issues in NIMBLE and compiling speed.
+## capthist - capture history
+## trapusage - trap active
+## primary - label of primary occassion for each individual (secondary) capture.
 dcapt_forward_internal <- nimbleFunction(
   setup = function(capthist, trapusage, primary){
     J <- nrow(trapusage)
@@ -80,6 +94,8 @@ dcapt_forward_internal <- nimbleFunction(
   }, # Hold data to make model smaller.
   run = function(){},
   methods = list(
+    ## capture history marginal distribution using forward solve. Assumes we are sampling initial state. 
+    ## We could remove this and marginalize the extra step in the future.
     dcapt_marg = function(x = double(), # index of animal 1:M
            real = double(),     # real or not real animal?
            Jprobs = double(1), # probability of detection for each secondary at each trap (single individual)
@@ -158,7 +174,7 @@ dcapt_forward_internal <- nimbleFunction(
   )
 )
 
-
+## Nimble code that is kept simple and clean due to data and constants stored in nimble function setup.
 JS_SCR <- nimbleCode({
   
   # Priors and constraints
@@ -170,7 +186,7 @@ JS_SCR <- nimbleCode({
   omega ~ dbeta(5,9) #somewhat informed prior for superpopulation
   
   # Survival and Recruitment Rates
-    # Dirichlet prior for entry probabilities
+  # Dirichlet prior for entry probabilities
   beta[1:n.prim.occasions] ~ ddirch(alpha[1:n.prim.occasions])
 
   # Convert entry probs to conditional entry probs
